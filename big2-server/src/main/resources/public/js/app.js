@@ -9,7 +9,7 @@
   const S = {
     view: 'home',
     room: null, mySeat: 0, owner: -1,
-    names: [null, null, null, null],
+    names: [null, null, null, null], tableNames: [null, null, null, null],
     settings: { room: 'gold-room', deck: 'noir', mode: 'single', points: 50, rounds: 5, timer: 30, twos: false, wrap: false, every3d: true },
     phase: 'lobby', deal: 0,
     hand: [], selected: new Set(), counts: [0, 0, 0, 0],
@@ -69,6 +69,8 @@
         const i = rest.indexOf(' ');
         S.room = rest.slice(0, i);
         S.names = rest.slice(i + 1).split(',').map(n => (n === '-' ? null : n));
+        // While the final results are showing, keep the names people played under (bot seats get freed now).
+        if (S.overlay !== 'match') S.tableNames = [...S.names];
         if (location.hash.slice(1) !== S.room) history.replaceState(null, '', '#' + S.room);
         break;
       }
@@ -145,7 +147,7 @@
       case 'MATCH':
         S.matchWinner = Number(rest.split(/\s+/)[0]);
         S.overlay = 'match';
-        S.lastResult = { winner: S.matchWinner, names: [...S.names], scores: [...S.scores], mode: S.settings.mode };
+        S.lastResult = { winner: S.matchWinner, names: [...S.tableNames], scores: [...S.scores], mode: S.settings.mode };
         break;
       case 'ERROR':
         if (S.view === 'home') $('#home-error').textContent = rest;
@@ -172,7 +174,7 @@
 
   function who(seat) {
     if (seat === S.mySeat) return 'You';
-    return S.names[seat] || 'Seat ' + (seat + 1);
+    return S.tableNames[seat] || 'Seat ' + (seat + 1);
   }
 
   /** A short description of a played combination, e.g. "a pair" or "K♥". */
@@ -285,7 +287,7 @@
     const myTurn = playing && S.turn === S.mySeat;
     const players = [0, 1, 2, 3].map(rel => {
       const seat = (S.mySeat + rel) % 4;
-      return { seat, name: rel === 0 ? 'You' : (S.names[seat] || 'Seat ' + (seat + 1)), count: S.counts[seat], active: playing && S.turn === seat };
+      return { seat, name: who(seat), count: S.counts[seat], active: playing && S.turn === seat };
     });
 
     let label = S.table.length ? `${who(S.tableOwner)} played ${describe(S.table)}` : S.lastAction;
@@ -472,6 +474,7 @@
     }
     if (e.target.id === 'to-lobby-btn') {
       S.overlay = null;
+      S.tableNames = [...S.names];
       S.view = S.phase === 'playing' ? 'table' : 'lobby';
       render();
     }
@@ -488,7 +491,7 @@
     leaving = true;
     if (ws) ws.close();
     history.replaceState(null, '', location.pathname);
-    Object.assign(S, { view: 'home', room: null, owner: -1, names: [null, null, null, null], hand: [], selected: new Set(), overlay: null, lastResult: null, phase: 'lobby', leaveArmed: false });
+    Object.assign(S, { view: 'home', room: null, owner: -1, names: [null, null, null, null], tableNames: [null, null, null, null], hand: [], selected: new Set(), overlay: null, lastResult: null, phase: 'lobby', leaveArmed: false });
     pickerKey = '';
     render();
   }

@@ -19,7 +19,7 @@ public final class WebServer {
      * @param staticDir a folder to serve the web client from instead of the jar, so edits show
      *                  on reload during development; null to use the files packaged in the jar
      */
-    public static Javalin start(int port, RoomManager rooms, String staticDir) {
+    public static Javalin start(String host, int port, RoomManager rooms, String staticDir) {
         Javalin app = Javalin.create(config -> {
             config.showJavalinBanner = false;
             if (staticDir == null) {
@@ -58,6 +58,6 @@ public final class WebServer {
             });
         });
 
-        return app.start(port);
+        return app.start(host, port);
     }
 }

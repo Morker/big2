@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
  *
  * <p>Ports: HTTP from {@code --http=N}, else the {@code PORT} environment variable (what most
  * cloud hosts set), else 8090. TCP from {@code --tcp=N}, default 5050; {@code --tcp=0} disables it.
+ * {@code --host=127.0.0.1} listens only on the machine itself, for running behind a proxy such as Caddy.
  * {@code --static=DIR} serves the web client from a folder instead of the jar (for development).
  *
  * <p>Run: {@code mvn -pl big2-server exec:java}, or {@code java -jar big2-server/target/big2-server.jar}.
@@ -24,21 +25,24 @@ public final class Big2Server {
     public static void main(String[] args) throws IOException {
         int httpPort = intOrDefault(System.getenv("PORT"), Protocol.DEFAULT_HTTP_PORT);
         int tcpPort = Protocol.DEFAULT_TCP_PORT;
+        String host = "0.0.0.0";
         String staticDir = null;
         for (String arg : args) {
             if (arg.startsWith("--http=")) {
                 httpPort = Integer.parseInt(arg.substring(7));
+            } else if (arg.startsWith("--host=")) {
+                host = arg.substring(7);
             } else if (arg.startsWith("--tcp=")) {
                 tcpPort = Integer.parseInt(arg.substring(6));
             } else if (arg.startsWith("--static=")) {
                 staticDir = arg.substring(9);
             } else {
-                System.err.println("Unknown argument: " + arg + " (use --http=PORT, --tcp=PORT, --static=DIR)");
+                System.err.println("Unknown argument: " + arg + " (use --http=PORT, --host=ADDRESS, --tcp=PORT, --static=DIR)");
             }
         }
         RoomManager rooms = new RoomManager();
 
-        WebServer.start(httpPort, rooms, staticDir);
+        WebServer.start(host, httpPort, rooms, staticDir);
         System.out.println("Big 2 is running. Open http://localhost:" + httpPort + " in your browser.");
 
         if (tcpPort > 0) {

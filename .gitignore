@@ -13,3 +13,6 @@ target/
 # OS
 .DS_Store
 Thumbs.db
+
+# Jar copied next to the deploy scripts on the server
+deploy/*.jar
