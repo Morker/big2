@@ -7,10 +7,10 @@ Wants=network-online.target
 User=big2
 Group=big2
 WorkingDirectory=/opt/big2
-# Listens on localhost only; Caddy serves it to the internet over HTTPS. The raw TCP port is off.
-ExecStart=/usr/bin/java -Xms64m -Xmx256m -jar /opt/big2/big2-server.jar --host=127.0.0.1 --http=8090 --tcp=0
+# Listens on localhost only; nginx serves it to the internet over HTTPS. The raw TCP port is off.
+ExecStart=/usr/bin/java -Xms64m -Xmx256m -jar /opt/big2/big2-server.jar --host=127.0.0.1 --http=18090 --tcp=0
 Restart=on-failure
-RestartSec=3
+RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
