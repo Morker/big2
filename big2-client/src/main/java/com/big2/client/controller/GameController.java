@@ -8,8 +8,8 @@ import java.util.function.Consumer;
 /**
  * What the UI can ask for. Two implementations:
  * <ul>
- *   <li>{@link LocalGameController}: runs the game in-process against bots (works now).</li>
- *   <li>{@link RemoteGameController}: talks to big2-server over the network (week 6 TODO).</li>
+ *   <li>{@link LocalGameController}: runs the game in-process against bots.</li>
+ *   <li>{@link RemoteGameController}: talks to big2-server over the network.</li>
  * </ul>
  * The UI depends only on this interface, so switching between them is one line.
  */
@@ -23,4 +23,9 @@ public interface GameController {
     void play(List<Card> cards);
 
     void pass();
+
+    /** Text for the button that calls {@link #newGame()}. */
+    default String newGameLabel() {
+        return "New game";
+    }
 }

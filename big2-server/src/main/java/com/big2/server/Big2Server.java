@@ -10,23 +10,54 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Entry point. Accepts TCP connections and gives each client its own virtual thread.
+ * Entry point. Starts the web server (browser client + WebSocket) and a plain TCP
+ * listener for testing with nc. Both share the same rooms.
  *
- * <p>Run: {@code mvn -pl big2-server exec:java} (optionally {@code -Dexec.args=6000} for another port).
+ * <p>Ports: HTTP from {@code --http=N}, else the {@code PORT} environment variable (what most
+ * cloud hosts set), else 8090. TCP from {@code --tcp=N}, default 5050; {@code --tcp=0} disables it.
+ * {@code --static=DIR} serves the web client from a folder instead of the jar (for development).
+ *
+ * <p>Run: {@code mvn -pl big2-server exec:java}, or {@code java -jar big2-server/target/big2-server.jar}.
  */
 public final class Big2Server {
 
     public static void main(String[] args) throws IOException {
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : Protocol.DEFAULT_PORT;
+        int httpPort = intOrDefault(System.getenv("PORT"), Protocol.DEFAULT_HTTP_PORT);
+        int tcpPort = Protocol.DEFAULT_TCP_PORT;
+        String staticDir = null;
+        for (String arg : args) {
+            if (arg.startsWith("--http=")) {
+                httpPort = Integer.parseInt(arg.substring(7));
+            } else if (arg.startsWith("--tcp=")) {
+                tcpPort = Integer.parseInt(arg.substring(6));
+            } else if (arg.startsWith("--static=")) {
+                staticDir = arg.substring(9);
+            } else {
+                System.err.println("Unknown argument: " + arg + " (use --http=PORT, --tcp=PORT, --static=DIR)");
+            }
+        }
         RoomManager rooms = new RoomManager();
 
-        try (ServerSocket server = new ServerSocket(port);
-             ExecutorService clients = Executors.newVirtualThreadPerTaskExecutor()) {
-            System.out.println("Big 2 server listening on port " + port);
-            while (true) {
-                Socket socket = server.accept();
-                clients.submit(new ClientConnection(socket, rooms));
+        WebServer.start(httpPort, rooms, staticDir);
+        System.out.println("Big 2 is running. Open http://localhost:" + httpPort + " in your browser.");
+
+        if (tcpPort > 0) {
+            try (ServerSocket server = new ServerSocket(tcpPort);
+                 ExecutorService clients = Executors.newVirtualThreadPerTaskExecutor()) {
+                System.out.println("TCP protocol listener on port " + tcpPort + " (try: nc localhost " + tcpPort + ")");
+                while (true) {
+                    Socket socket = server.accept();
+                    clients.submit(new ClientConnection(socket, rooms));
+                }
             }
+        }
+    }
+
+    private static int intOrDefault(String value, int fallback) {
+        try {
+            return value == null || value.isBlank() ? fallback : Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
         }
     }
 }

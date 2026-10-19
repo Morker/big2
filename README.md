@@ -54,7 +54,16 @@ mvn -pl big2-core exec:java
 mvn -pl big2-server exec:java
 ```
 
-You can talk to the server before the online client exists:
+### Playing with a friend
+
+1. **One person** starts the server: `mvn -pl big2-server exec:java` (allow it through the Windows firewall when asked).
+2. **Both** run the client (`mvn -pl big2-client exec:java`), choose **Play with Friends**, and enter:
+   - the host's address: `localhost` for the host, the host's IP for the friend
+     (same Wi-Fi: the IPv4 address from `ipconfig`; over the internet: a Tailscale/ZeroTier address, or forward TCP port 5050 on the router),
+   - port `5050`, and the same room name.
+3. When both are in the waiting room, press **Start game**. Empty seats are filled by bots.
+
+You can also talk to the server without the client:
 
 ```
 nc localhost 5050          # or: telnet localhost 5050

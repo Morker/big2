@@ -31,13 +31,16 @@ import java.util.Random;
 public final class Game {
 
     public static final int PLAYER_COUNT = 4;
+    /** Pass as {@code leader} to make the holder of 3♦ open with it. */
+    public static final int THREE_OF_DIAMONDS_LEADS = -1;
 
     private final List<Player> players;
+    private final HouseRules rules;
     private int currentSeat;
     private Hand lastPlay;
     private int lastPlaySeat = -1;
     private int passesInRow;
-    private boolean firstMove = true;
+    private boolean firstMove;
     private Player winner;
 
     /** Starts a game with a freshly shuffled deck. */
@@ -45,26 +48,52 @@ public final class Game {
         this(names, shuffledHands(random));
     }
 
+    /** Starts a game with a freshly shuffled deck, the given rules and opening seat. */
+    public Game(List<String> names, Random random, HouseRules rules, int leader) {
+        this(names, shuffledHands(random), rules, leader);
+    }
+
     /** Starts a game with pre-dealt hands. Handy for tests and replaying games. */
     public Game(List<String> names, List<List<Card>> hands) {
+        this(names, hands, HouseRules.STANDARD, THREE_OF_DIAMONDS_LEADS);
+    }
+
+    /**
+     * Starts a game with pre-dealt hands.
+     *
+     * @param leader {@link #THREE_OF_DIAMONDS_LEADS} for the usual opening, or a seat that may lead
+     *               anything (used for later deals when 3♦ only opens the first one)
+     */
+    public Game(List<String> names, List<List<Card>> hands, HouseRules rules, int leader) {
         if (names.size() != PLAYER_COUNT || hands.size() != PLAYER_COUNT) {
             throw new IllegalArgumentException("Big 2 needs exactly " + PLAYER_COUNT + " players");
         }
+        this.rules = rules;
         List<Player> list = new ArrayList<>();
         for (String name : names) {
             list.add(new Player(name));
         }
         this.players = Collections.unmodifiableList(list);
 
-        currentSeat = -1;
+        int holder = -1;
         for (int i = 0; i < PLAYER_COUNT; i++) {
             players.get(i).receive(hands.get(i));
             if (hands.get(i).contains(Card.THREE_OF_DIAMONDS)) {
-                currentSeat = i;
+                holder = i;
             }
         }
-        if (currentSeat < 0) {
-            throw new IllegalArgumentException("Someone must hold the 3 of diamonds");
+        if (leader == THREE_OF_DIAMONDS_LEADS) {
+            if (holder < 0) {
+                throw new IllegalArgumentException("Someone must hold the 3 of diamonds");
+            }
+            currentSeat = holder;
+            firstMove = true;
+        } else {
+            if (leader < 0 || leader >= PLAYER_COUNT) {
+                throw new IllegalArgumentException("No seat " + leader);
+            }
+            currentSeat = leader;
+            firstMove = false;
         }
     }
 
@@ -85,7 +114,7 @@ public final class Game {
         if (!player.hasAll(cards)) {
             throw new InvalidMoveException("You don't hold those cards");
         }
-        Hand hand = HandEvaluator.evaluate(cards)
+        Hand hand = HandEvaluator.evaluate(cards, rules)
                 .orElseThrow(() -> new InvalidMoveException("That is not a valid combination"));
         if (firstMove && !hand.contains(Card.THREE_OF_DIAMONDS)) {
             throw new InvalidMoveException("The first play must include the 3 of diamonds");
@@ -134,15 +163,24 @@ public final class Game {
      */
     public Map<String, Integer> penalties() {
         Map<String, Integer> result = new LinkedHashMap<>();
-        for (Player p : players) {
-            int n = p.cardCount();
-            int multiplier = n == 13 ? 3 : n >= 10 ? 2 : 1;
-            result.put(p.name(), n * multiplier);
+        for (int seat = 0; seat < PLAYER_COUNT; seat++) {
+            result.put(players.get(seat).name(), penalty(seat));
         }
         return result;
     }
 
+    /** Penalty points for one seat, using the same rule as {@link #penalties()}. */
+    public int penalty(int seat) {
+        int n = players.get(seat).cardCount();
+        int multiplier = n == 13 ? 3 : n >= 10 ? 2 : 1;
+        return n * multiplier;
+    }
+
     // ---- Read-only state, used by bots, the server and the UI ----
+
+    public HouseRules rules() {
+        return rules;
+    }
 
     public List<Player> players() {
         return players;
@@ -169,8 +207,13 @@ public final class Game {
         return lastPlay == null;
     }
 
+    /** True while the opening play must still include 3♦. */
     public boolean isFirstMove() {
         return firstMove;
+    }
+
+    public int winnerSeat() {
+        return winner == null ? -1 : players.indexOf(winner);
     }
 
     public boolean isOver() {

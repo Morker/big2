@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Big 2</title>
+  <meta name="description" content="Play Big 2 (Choi Dai Di) with friends in the browser.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Bodoni+Moda:ital,wght@0,500;0,700;1,500&family=Cormorant+Garamond:ital,wght@0,700;1,700&family=JetBrains+Mono:wght@500;700;800&family=Limelight&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@900&text=%E9%89%A4%E5%A5%B3%E8%80%81%E5%A4%A7%E9%8B%A4D%E6%96%B9%E5%A1%8A%E6%A2%85%E8%8A%B1%E7%B4%85%E5%BF%83%E9%BB%91%E6%A1%83%E6%9D%B1%E5%8D%97%E8%A5%BF%E5%8C%97&display=swap">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<main id="home" class="screen">
+  <div class="home-card">
+    <div class="suits" aria-hidden="true">&#9824; &#9829; &#9827; &#9830;</div>
+    <h1 class="logo">BIG 2</h1>
+    <p class="sub">&#37636;&#22823;D &middot; Choi Dai Di</p>
+
+    <form id="create-form" class="stack" autocomplete="off">
+      <label for="name-input">Your name</label>
+      <input id="name-input" name="name" maxlength="16" placeholder="Mei" required>
+      <button id="create-btn" type="submit" class="btn primary">Create a room</button>
+    </form>
+
+    <div class="divider"><span>or join a friend</span></div>
+
+    <form id="join-form" class="row" autocomplete="off">
+      <label for="code-input" class="sr-only">Room code</label>
+      <input id="code-input" name="code" maxlength="12" placeholder="Room code, e.g. KQTR">
+      <button type="submit" class="btn">Join</button>
+    </form>
+
+    <p id="home-error" class="error" role="alert"></p>
+    <p class="hint">Create a room, then send the invite link to your friends. Empty seats are played by bots, so you can also start alone.</p>
+  </div>
+</main>
+
+<main id="lobby" class="screen" hidden>
+  <header class="lobby-head">
+    <div>
+      <div class="eyebrow">Room</div>
+      <div class="code" id="lobby-code"></div>
+    </div>
+    <div class="invite">
+      <label for="invite-link" class="eyebrow">Invite link</label>
+      <div class="row">
+        <input id="invite-link" readonly>
+        <button id="copy-btn" type="button" class="btn">Copy</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="last-result" class="banner" hidden></div>
+
+  <div class="lobby-grid">
+    <section class="panel seats-panel" aria-labelledby="seats-title">
+      <h2 id="seats-title">Players</h2>
+      <ol id="seat-list" class="seat-list"></ol>
+      <p id="seat-note" class="muted"></p>
+      <button id="start-btn" type="button" class="btn primary big">Start game</button>
+      <button id="leave-lobby-btn" type="button" class="btn ghost">Leave room</button>
+    </section>
+
+    <section class="panel settings-panel" aria-labelledby="settings-title">
+      <div class="settings-title-row">
+        <h2 id="settings-title">Table settings</h2>
+        <span id="settings-lock" class="muted"></span>
+      </div>
+      <fieldset id="settings" class="settings">
+        <div class="setting">
+          <h3>Room</h3>
+          <div id="room-picker" class="picker rooms"></div>
+        </div>
+        <div class="setting">
+          <h3>Cards</h3>
+          <div id="deck-picker" class="picker decks"></div>
+        </div>
+        <div class="setting two-col">
+          <div>
+            <h3>Game mode</h3>
+            <div class="segmented" role="radiogroup" aria-label="Game mode">
+              <label><input type="radio" name="mode" value="single"><span>Single deal</span></label>
+              <label><input type="radio" name="mode" value="points"><span>Points race</span></label>
+              <label><input type="radio" name="mode" value="rounds"><span>Fixed rounds</span></label>
+            </div>
+            <div class="mode-extra" id="mode-points">
+              <label for="points-input">Game ends at</label>
+              <input id="points-input" type="number" min="10" max="200" step="5"> <span class="muted">penalty points; lowest total wins</span>
+            </div>
+            <div class="mode-extra" id="mode-rounds">
+              <label for="rounds-input">Deals</label>
+              <input id="rounds-input" type="number" min="1" max="20" step="1"> <span class="muted">lowest total wins</span>
+            </div>
+            <p class="muted" id="mode-single">First player to empty their hand wins.</p>
+          </div>
+          <div>
+            <h3><label for="timer-select">Turn timer</label></h3>
+            <select id="timer-select">
+              <option value="0">Off</option>
+              <option value="15">15 seconds</option>
+              <option value="20">20 seconds</option>
+              <option value="30">30 seconds</option>
+              <option value="45">45 seconds</option>
+              <option value="60">60 seconds</option>
+              <option value="90">90 seconds</option>
+              <option value="120">2 minutes</option>
+            </select>
+            <p class="muted">When time runs out the player passes, or plays their lowest card if they must lead.</p>
+          </div>
+        </div>
+        <div class="setting">
+          <h3>House rules</h3>
+          <label class="toggle"><input type="checkbox" id="rule-every3d"><span><b>3&#9830; opens every deal</b><small>Off: 3&#9830; opens the first deal, then the last winner leads.</small></span></label>
+          <label class="toggle"><input type="checkbox" id="rule-twos"><span><b>2s in straights</b><small>Allows J-Q-K-A-2 as the highest straight.</small></span></label>
+          <label class="toggle"><input type="checkbox" id="rule-wrap"><span><b>Low wrap-around straights</b><small>Allows A-2-3-4-5 and 2-3-4-5-6, ranked below 3-4-5-6-7.</small></span></label>
+        </div>
+      </fieldset>
+    </section>
+  </div>
+</main>
+
+<main id="table" class="screen" hidden>
+  <div id="stage"></div>
+  <div id="hud"></div>
+  <div id="overlay" hidden></div>
+  <div id="rotate-hint">Turn your phone sideways for a bigger table.</div>
+</main>
+
+<div id="toasts" aria-live="polite"></div>
+
+<script src="js/cards.js"></script>
+<script src="js/rooms.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

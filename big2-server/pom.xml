@@ -12,12 +12,27 @@
 
     <artifactId>big2-server</artifactId>
     <name>Big 2 - Game server</name>
-    <description>Authoritative multiplayer server. Plain JDK sockets, no framework.</description>
+    <description>Authoritative multiplayer server. Serves the web client over HTTP and plays over WebSocket (Javalin); also accepts plain TCP for testing with nc.</description>
+
+    <properties>
+        <javalin.version>6.3.0</javalin.version>
+        <slf4j.version>2.0.16</slf4j.version>
+    </properties>
 
     <dependencies>
         <dependency>
             <groupId>com.big2</groupId>
             <artifactId>big2-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin</artifactId>
+            <version>${javalin.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>${slf4j.version}</version>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -33,6 +48,41 @@
                 <configuration>
                     <mainClass>com.big2.server.Big2Server</mainClass>
                 </configuration>
+            </plugin>
+            <!-- Builds target/big2-server.jar with everything inside: java -jar big2-server.jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <finalName>big2-server</finalName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.big2.server.Big2Server</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

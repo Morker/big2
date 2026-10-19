@@ -25,7 +25,7 @@ public final class SimpleBot implements Bot {
     @Override
     public Optional<Hand> chooseMove(Game game, int seat) {
         List<Hand> options = MoveGenerator.playableHands(
-                game.player(seat).hand(), game.lastPlay(), game.isFirstMove());
+                game.player(seat).hand(), game.lastPlay(), game.isFirstMove(), game.rules());
         if (options.isEmpty()) {
             return Optional.empty();
         }
