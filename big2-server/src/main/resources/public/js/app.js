@@ -22,11 +22,15 @@
     table: [], tableOwner: -1, playsThisDeal: 0, lastAction: '', lastPass: '',
     penalties: [0, 0, 0, 0], scores: [0, 0, 0, 0], dealWinner: -1,
     overlay: null, nextAt: 0, matchWinner: -1, lastResult: null,
-    leaveArmed: false
+    leaveArmed: false,
+    key: null, away: new Set(), restoring: false, reconnecting: false, rejoining: false
   };
 
   /** How long the winning play stays visible before the results appear. */
   const REVEAL_MS = 2600;
+
+  /** Plays a sound effect, except while a reconnect snapshot is being replayed. */
+  const sfx = (name, arg) => { if (!S.restoring) Sound.effect(name, arg); };
 
   // ---------- Animations ----------
   // Each entry remembers when it started; rooms.js turns that into CSS animations that survive re-renders.
@@ -36,7 +40,7 @@
   const orientation = () => (window.innerHeight > window.innerWidth ? 'portrait' : 'landscape');
 
   function animate(kind, data) {
-    if (reduceMotion) return;
+    if (reduceMotion || S.restoring) return;
     const entry = Object.assign({ start: performance.now() }, data);
     if (kind === 'pass') A.passes.push(entry);
     else if (kind === 'react') A.reactions.push(entry);
@@ -73,13 +77,74 @@
     ws.onclose = () => {
       ws = null;
       if (leaving) { leaving = false; return; }
-      if (S.view !== 'home') {
-        toast('Connection to the server was lost. Reload the page to join again.', true);
-      } else {
-        $('#home-error').textContent = 'Could not reach the game server. Is it running?';
+      if (S.room && S.key) {
+        scheduleReconnect();
+      } else if (S.view === 'home') {
+        $('#home-error').textContent = 'Could not reach the game server. Check your connection and try again.';
       }
     };
   }
+
+  // ---------- Reconnecting ----------
+  // The server holds a dropped player's seat for a while. Our seat key (TOKEN) gets it back.
+
+  const SEAT_KEY = 'big2-seat';
+  const SEAT_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+  let reconnectTries = 0, reconnectTimer = 0;
+
+  function saveSeat() {
+    if (!S.room || !S.key) return;
+    try { localStorage.setItem(SEAT_KEY, JSON.stringify({ room: S.room, key: S.key, at: Date.now() })); } catch (e) { /* storage unavailable */ }
+  }
+  function loadSeat() {
+    try {
+      const seat = JSON.parse(localStorage.getItem(SEAT_KEY));
+      return seat && seat.room && seat.key && Date.now() - seat.at < SEAT_MAX_AGE_MS ? seat : null;
+    } catch (e) { return null; }
+  }
+  function forgetSeat() {
+    try { localStorage.removeItem(SEAT_KEY); } catch (e) { /* storage unavailable */ }
+  }
+
+  function rejoin() {
+    clearTimeout(reconnectTimer);
+    send(`REJOIN ${S.room} ${S.key}`);
+  }
+
+  function scheduleReconnect() {
+    S.reconnecting = true;
+    showReconnecting();
+    clearTimeout(reconnectTimer);
+    const wait = Math.min(10000, 1000 * Math.pow(2, reconnectTries++));
+    reconnectTimer = setTimeout(rejoin, wait);
+  }
+
+  function showReconnecting() {
+    $('#reconnect').hidden = !S.reconnecting;
+  }
+
+  /** The seat could not be taken back (game over, or the seat was given up): start fresh. */
+  function giveUpRejoin(message) {
+    forgetSeat();
+    S.reconnecting = false;
+    S.rejoining = false;
+    reconnectTries = 0;
+    showReconnecting();
+    leaving = true;
+    if (ws) ws.close();
+    Object.assign(S, { view: 'home', room: null, key: null, owner: -1, names: [null, null, null, null], tableNames: [null, null, null, null], hand: [], selected: new Set(), overlay: null, phase: 'lobby', away: new Set() });
+    history.replaceState(null, '', location.pathname);
+    render();
+    if (message) $('#home-error').textContent = message;
+  }
+
+  // Phones close connections in the background: try again as soon as the page is visible.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && S.room && S.key && (!ws || ws.readyState > 1)) {
+      reconnectTries = 0;
+      rejoin();
+    }
+  });
 
   function send(line) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(line);
@@ -101,14 +166,63 @@
         return;
       case 'SEAT':
         S.mySeat = Number(rest);
-        S.view = 'lobby';
+        if (!S.restoring) S.view = 'lobby';
         break;
+      case 'TOKEN':
+        S.key = rest.trim();
+        saveSeat();
+        break;
+      case 'RESUME':
+        S.restoring = true;
+        Object.assign(S, { table: [], tableOwner: -1, overlay: null, dealWinner: -1, matchWinner: -1, lastAction: '', lastPass: '', away: new Set(), turnDeadline: 0 });
+        S.selected.clear();
+        A = { deal: null, play: null, shift: null, sweep: null, shake: null, passes: [], reactions: [] };
+        return;
+      case 'RESUMED': {
+        S.restoring = false;
+        S.revealUntil = 0;
+        S.view = S.phase === 'lobby' ? 'lobby' : 'table';
+        const wasAway = S.reconnecting || S.rejoining;
+        S.reconnecting = false;
+        S.rejoining = false;
+        reconnectTries = 0;
+        showReconnecting();
+        saveSeat();
+        if (wasAway) toast("You're back in the game.");
+        break;
+      }
+      case 'TABLE': {
+        const parts = rest.trim().split(' ');
+        S.tableOwner = Number(parts[0]);
+        S.table = parts.slice(1);
+        S.lastAction = `${who(S.tableOwner)} played ${describe(S.table)}`;
+        break;
+      }
+      case 'AWAY': {
+        const seat = Number(rest);
+        S.away.add(seat);
+        if (!S.restoring) toast(`${who(seat)} lost connection. Their seat is kept for a few minutes.`);
+        break;
+      }
+      case 'BACK': {
+        const seat = Number(rest);
+        const was = S.away.delete(seat);
+        if (was && seat !== S.mySeat) toast(`${who(seat)} is back.`);
+        break;
+      }
+      case 'LEFT': {
+        const seat = Number(rest);
+        S.away.delete(seat);
+        toast(S.phase === 'lobby' ? `${who(seat)} left the room.` : `${who(seat)} left. A bot plays their seat now.`);
+        break;
+      }
       case 'LOBBY': {
         const i = rest.indexOf(' ');
         S.room = rest.slice(0, i);
+        saveSeat();
         const seatedBefore = S.names.filter(Boolean).length;
         S.names = rest.slice(i + 1).split(',').map(n => (n === '-' ? null : n));
-        if (S.view === 'lobby' && S.names.filter(Boolean).length > seatedBefore && seatedBefore > 0) Sound.effect('join');
+        if (S.view === 'lobby' && S.names.filter(Boolean).length > seatedBefore && seatedBefore > 0) sfx('join');
         // While the final results are showing, keep the names people played under (bot seats get freed now).
         if (S.overlay !== 'match') S.tableNames = [...S.names];
         if (location.hash.slice(1) !== S.room) history.replaceState(null, '', '#' + S.room);
@@ -133,7 +247,7 @@
         A = { deal: null, play: null, shift: null, sweep: null, shake: null, passes: [], reactions: [] };
         animate('deal');
         S.quick = null;
-        Sound.effect('deal');
+        sfx('deal');
         break;
       case 'HAND': {
         const before = S.hand;
@@ -154,10 +268,10 @@
         S.leading = mode === 'LEAD';
         S.turnSeconds = Number(secs || 0);
         S.turnDeadline = S.turnSeconds > 0 ? Date.now() + S.turnSeconds * 1000 : 0;
-        if (S.turn === S.mySeat) Sound.effect('turn');
+        if (S.turn === S.mySeat) sfx('turn');
         if (S.leading && S.table.length) {
           animate('sweep', { cards: [...S.table], rel: relOf(prevOwner) });
-          Sound.effect('sweep');
+          sfx('sweep');
           S.lastAction = `${who(prevOwner)} won the trick`;
           S.table = []; S.tableOwner = -1; S.lastPass = '';
         }
@@ -167,7 +281,7 @@
         const parts = rest.split(/\s+/);
         const seat = Number(parts[0]);
         animate('play', { rel: relOf(seat), prevHand: seat === S.mySeat ? [...S.hand] : null });
-        Sound.effect('play', parts.length - 1);
+        sfx('play', parts.length - 1);
         S.quick = null;
         S.table = parts.slice(1);
         S.tableOwner = seat;
@@ -180,13 +294,13 @@
       case 'REACT': {
         const [seat, id] = rest.split(/\s+/);
         animate('react', { rel: relOf(Number(seat)), id });
-        Sound.effect('pop');
+        sfx('pop');
         break;
       }
       case 'PASSED':
         S.lastPass = `${who(Number(rest))} passed`;
         animate('pass', { rel: relOf(Number(rest)) });
-        Sound.effect('pass');
+        sfx('pass');
         break;
       case 'TIMEOUT': {
         const seat = Number(rest);
@@ -198,7 +312,7 @@
         setTimeout(() => { if (S.view === 'table') renderTable(); }, REVEAL_MS + 30);
         S.dealWinner = Number(rest.split(/\s+/)[0]);
         S.turnDeadline = 0;
-        Sound.effect(S.dealWinner === S.mySeat ? 'win' : 'lose');
+        sfx(S.dealWinner === S.mySeat ? 'win' : 'lose');
         break;
       case 'SCORES': {
         const n = nums();
@@ -213,13 +327,17 @@
       case 'MATCH':
         S.matchWinner = Number(rest.split(/\s+/)[0]);
         S.overlay = 'match';
-        if (S.matchWinner === S.mySeat && S.settings.mode !== 'single') Sound.effect('fanfare');
+        if (S.matchWinner === S.mySeat && S.settings.mode !== 'single') sfx('fanfare');
         S.lastResult = { winner: S.matchWinner, names: [...S.tableNames], scores: [...S.scores], mode: S.settings.mode };
         break;
       case 'ERROR':
+        if ((S.rejoining || S.reconnecting) && /seat|ended|room/i.test(rest)) {
+          giveUpRejoin(rest);
+          return;
+        }
         if (S.view === 'home') $('#home-error').textContent = rest;
         else toast(rest, true);
-        Sound.effect('error');
+        sfx('error');
         return;
       default:
         return;
@@ -291,7 +409,7 @@
     $('#seat-list').innerHTML = S.names.map((n, seat) => {
       const tags = (seat === S.owner ? '<span class="tag">Host</span>' : '') + (seat === S.mySeat ? '<span class="tag you">You</span>' : '');
       if (!n) return `<li class="empty"><span class="medal">${winds[seat]}</span><span class="who"><b>Open seat</b><small>A bot plays here if nobody joins</small></span></li>`;
-      return `<li><span class="medal">${esc(n[0].toUpperCase())}</span><span class="who"><b>${esc(n)}</b><small>Seat ${seat + 1}</small></span>${tags}</li>`;
+      return `<li><span class="medal">${esc(n[0].toUpperCase())}</span><span class="who"><b>${esc(n)}</b><small>${S.away.has(seat) ? 'Reconnecting…' : 'Seat ' + (seat + 1)}</small></span>${tags}</li>`;
     }).join('');
 
     const humans = S.names.filter(Boolean).length;
@@ -359,7 +477,7 @@
     const myTurn = playing && S.turn === S.mySeat;
     const players = [0, 1, 2, 3].map(rel => {
       const seat = (S.mySeat + rel) % 4;
-      return { seat, name: who(seat), count: S.counts[seat], active: playing && S.turn === seat };
+      return { seat, name: who(seat) + (S.away.has(seat) ? ' \u00B7 away' : ''), count: S.counts[seat], active: playing && S.turn === seat };
     });
 
     let label = S.table.length ? `${who(S.tableOwner)} played ${describe(S.table)}` : S.lastAction;
@@ -410,7 +528,7 @@
     const index = S.quick && S.quick.type === type ? (S.quick.index + 1) % list.length : 0;
     S.quick = { type, index };
     S.selected = new Set(list[index].cards.map(c => c.code));
-    Sound.effect('select');
+    sfx('select');
     renderTable();
   }
 
@@ -485,7 +603,7 @@
     }
     if (S.turnDeadline && S.phase === 'playing' && S.turn === S.mySeat) {
       const secs = Math.ceil((S.turnDeadline - Date.now()) / 1000);
-      if (secs <= 5 && secs > 0 && secs !== lastTickSecond) { lastTickSecond = secs; Sound.effect('tick'); }
+      if (secs <= 5 && secs > 0 && secs !== lastTickSecond) { lastTickSecond = secs; sfx('tick'); }
     }
     const next = document.getElementById('next-count');
     if (next) next.textContent = `Next deal in ${Math.max(0, Math.ceil((S.nextAt - Date.now()) / 1000))}s`;
@@ -569,7 +687,7 @@
     const why = Combos.problem([...S.selected], tableToBeat(), rulesNow(), mustIncludeThreeOfDiamonds());
     if (why) {
       animate('shake');
-      Sound.effect('error');
+      sfx('error');
       toast(why, true);
       renderTable();
       return;
@@ -604,7 +722,7 @@
       S.quick = null;
       const code = card.getAttribute('data-card');
       if (S.selected.has(code)) S.selected.delete(code); else S.selected.add(code);
-      Sound.effect('select');
+      sfx('select');
       renderTable();
       return;
     }
@@ -663,9 +781,14 @@
 
   function leaveRoom() {
     leaving = true;
+    forgetSeat();
+    clearTimeout(reconnectTimer);
+    S.reconnecting = false;
+    showReconnecting();
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send('QUIT');
     if (ws) ws.close();
     history.replaceState(null, '', location.pathname);
-    Object.assign(S, { view: 'home', room: null, owner: -1, names: [null, null, null, null], tableNames: [null, null, null, null], hand: [], selected: new Set(), overlay: null, lastResult: null, phase: 'lobby', leaveArmed: false });
+    Object.assign(S, { view: 'home', room: null, key: null, owner: -1, names: [null, null, null, null], tableNames: [null, null, null, null], hand: [], selected: new Set(), overlay: null, lastResult: null, phase: 'lobby', leaveArmed: false, away: new Set() });
     pickerKey = '';
     render();
   }
@@ -709,11 +832,11 @@
   $('#sfx-on').addEventListener('change', e => {
     Sound.set({ sfx: e.target.checked });
     syncSoundControls();
-    Sound.effect('click');
+    sfx('click');
   });
   $('#music-vol').addEventListener('input', e => Sound.set({ musicVol: e.target.value / 100 }));
   $('#sfx-vol').addEventListener('input', e => Sound.set({ sfxVol: e.target.value / 100 }));
-  $('#sfx-vol').addEventListener('change', () => Sound.effect('play', 2));
+  $('#sfx-vol').addEventListener('change', () => sfx('play', 2));
 
   // ---------- Installing as an app (PWA) ----------
 
@@ -766,7 +889,16 @@
   if (new URLSearchParams(location.search).has('debug')) {
     window.Big2Debug = { feed: handle, state: S };
   } else {
-    connect();
+    const saved = loadSeat();
+    if (saved && (!fromLink || fromLink === saved.room)) {
+      S.room = saved.room;
+      S.key = saved.key;
+      S.rejoining = true;
+      $('#home-error').textContent = `Rejoining room ${saved.room}\u2026`;
+      rejoin();
+    } else {
+      connect();
+    }
   }
   render();
 })();

@@ -11,8 +11,10 @@ import com.big2.core.match.Match;
 import com.big2.server.PlayerSession;
 import com.big2.server.protocol.Protocol;
 
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
@@ -28,15 +30,21 @@ import java.util.stream.Collectors;
  * {@link Game}, and each player is only ever sent their own hand.
  *
  * <p>The first person to sit down owns the room: only they change the {@link GameSettings}
- * and start the match. If they leave, ownership passes to the next human seat.
+ * and start the match. If they leave, ownership passes to another connected player.
  *
  * <p>Life cycle: {@code lobby} (settings can change) → {@code playing} a deal →
  * {@code between} deals (a short pause showing the scores) → … → back to {@code lobby}
  * when the {@link Match} is over.
  *
+ * <p><b>Reconnecting.</b> Each person who sits down gets a secret seat key ({@code TOKEN}).
+ * If their connection drops, the seat is held for a grace period: their turns are played by
+ * the bot after a short wait, and {@code REJOIN} with the key puts them back with a full
+ * snapshot of the table. If nobody at the table is connected, play pauses. Leaving on purpose
+ * ({@code QUIT}) gives the seat up at once.
+ *
  * <p>All state changes happen while holding this object's lock: the public methods are
- * synchronized, and scheduled tasks (bot moves, turn timers, the next deal) lock it too.
- * Every scheduled task carries a token, so a task that was overtaken by events does nothing.
+ * synchronized, and scheduled tasks (bot moves, turn timers, the next deal, grace periods)
+ * lock it too. Every scheduled task carries a token, so a task that was overtaken by events does nothing.
  */
 public final class GameRoom {
 
@@ -45,6 +53,8 @@ public final class GameRoom {
     /** Reactions players can send; the client turns each id into an emoji. */
     static final Set<String> REACTIONS = Set.of("like", "lol", "wow", "cool", "cry", "angry", "fire", "clap", "gg");
     private static final long REACTION_GAP_MS = 1200;
+    private static final SecureRandom KEYS = new SecureRandom();
+    private static final String BOT_SUFFIX = "(bot)";
 
     private enum Phase {
         LOBBY, PLAYING, BETWEEN;
@@ -58,11 +68,16 @@ public final class GameRoom {
     private final ScheduledExecutorService scheduler;
     private final RoomTiming timing;
     private final Consumer<GameRoom> onEmpty;
+
+    /** The open connection for each seat, or null (empty, bot, or person away). */
     private final PlayerSession[] seats = new PlayerSession[Game.PLAYER_COUNT];
+    /** Seat keys: non-null means a person holds this seat, connected or not. */
+    private final String[] keys = new String[Game.PLAYER_COUNT];
     private final String[] names = new String[Game.PLAYER_COUNT];
-    private Bot bot = BotLevel.NORMAL.create();
-    private final Random random = new Random();
+    private final ScheduledFuture<?>[] graceTimers = new ScheduledFuture<?>[Game.PLAYER_COUNT];
     private final long[] lastReaction = new long[Game.PLAYER_COUNT];
+    private final Random random = new Random();
+    private Bot bot = BotLevel.NORMAL.create();
 
     private GameSettings settings = GameSettings.DEFAULT;
     private Phase phase = Phase.LOBBY;
@@ -71,6 +86,8 @@ public final class GameRoom {
     private Game game;
     private ScheduledFuture<?> pending;
     private int token;
+    private long turnEndsAt;
+    private long nextDealAt;
     private boolean closed;
 
     GameRoom(String id, ScheduledExecutorService scheduler, RoomTiming timing, Consumer<GameRoom> onEmpty) {
@@ -94,15 +111,18 @@ public final class GameRoom {
             throw new IllegalStateException("A game is in progress in room " + id + ". Try again when it ends.");
         }
         for (int i = 0; i < seats.length; i++) {
-            if (seats[i] == null) {
+            if (keys[i] == null && seats[i] == null) {
                 seats[i] = player;
+                keys[i] = newKey();
                 names[i] = uniqueName(player.name());
                 if (owner < 0) {
                     owner = i;
                 }
                 player.send(Protocol.SEAT + " " + i);
+                player.send(Protocol.TOKEN + " " + keys[i]);
                 player.send(Protocol.SETTINGS + " " + settings.toWire());
                 player.send(Protocol.PHASE + " " + phase.id());
+                sendAwaySeats(player, i);
                 broadcastLobby();
                 broadcast(Protocol.OWNER + " " + owner);
                 return;
@@ -111,28 +131,109 @@ public final class GameRoom {
         throw new IllegalStateException("Room " + id + " is full");
     }
 
-    /** A player disconnected. Mid-match a bot takes over their seat so the others can carry on. */
+    /** Puts a returning player back in their seat, with everything they need to carry on. */
+    public synchronized void rejoin(PlayerSession player, String key) {
+        int seat = -1;
+        for (int i = 0; i < keys.length; i++) {
+            if (key != null && key.equals(keys[i])) {
+                seat = i;
+            }
+        }
+        if (closed || seat < 0) {
+            throw new IllegalStateException("Your seat in room " + id + " was given up. Join or create a new game.");
+        }
+        boolean nobodyWasHere = !anyConnected();
+        PlayerSession previous = seats[seat];
+        if (previous != null && previous != player) {
+            previous.send(Protocol.ERROR + " You opened the game in another window, so this one was disconnected.");
+        }
+        seats[seat] = player;
+        cancelGrace(seat);
+
+        if (owner < 0 || seats[owner] == null) {
+            owner = seat; // the owner is away: whoever is here can run the table
+        }
+        sendSnapshot(seat);
+        broadcast(Protocol.BACK + " " + seat);
+        broadcast(Protocol.OWNER + " " + owner);
+
+        if (phase == Phase.PLAYING && (nobodyWasHere || game.currentSeat() == seat)) {
+            nextTurn(); // resume a paused table, or restart this player's own turn timer
+        } else if (phase == Phase.BETWEEN && nobodyWasHere) {
+            int t = ++token;
+            long wait = Math.max(2000, nextDealAt - System.currentTimeMillis());
+            pending = later(wait, () -> nextDeal(t));
+        }
+    }
+
+    /** The connection dropped: hold the seat for a while so the player can come back. */
     public synchronized void leave(PlayerSession player) {
         int seat = indexOf(player);
         if (seat < 0) {
             return;
         }
         seats[seat] = null;
-        names[seat] = phase == Phase.LOBBY ? null : names[seat] + "(bot)";
+        String key = keys[seat];
+        long grace = phase == Phase.LOBBY ? timing.lobbyGraceMs() : timing.gameGraceMs();
+        graceTimers[seat] = later(grace, () -> graceOver(seat, key));
+        broadcast(Protocol.AWAY + " " + seat);
 
-        if (Arrays.stream(seats).allMatch(s -> s == null)) {
+        if (owner == seat) {
+            int other = firstConnectedSeat();
+            if (other >= 0) {
+                owner = other;
+                broadcast(Protocol.OWNER + " " + owner);
+            }
+        }
+        if (!anyConnected()) {
+            cancelPending(); // everyone is away: pause until someone returns
+        } else if (phase == Phase.PLAYING && game.currentSeat() == seat) {
+            nextTurn(); // switch their running turn over to the away handling
+        }
+    }
+
+    /** The player left on purpose: give the seat up straight away. */
+    public synchronized void quit(PlayerSession player) {
+        int seat = indexOf(player);
+        if (seat >= 0) {
+            release(seat);
+        }
+    }
+
+    private synchronized void graceOver(int seat, String key) {
+        if (key != null && key.equals(keys[seat]) && seats[seat] == null) {
+            release(seat);
+        }
+    }
+
+    /** Frees a seat for good: empty in the lobby, a bot during a game. */
+    private void release(int seat) {
+        cancelGrace(seat);
+        seats[seat] = null;
+        keys[seat] = null;
+        if (phase == Phase.LOBBY) {
+            names[seat] = null;
+        } else if (!names[seat].endsWith(BOT_SUFFIX)) {
+            names[seat] = names[seat] + BOT_SUFFIX;
+        }
+
+        if (Arrays.stream(keys).allMatch(k -> k == null)) {
             closed = true;
             cancelPending();
+            for (int i = 0; i < graceTimers.length; i++) {
+                cancelGrace(i);
+            }
             onEmpty.accept(this);
             return;
         }
         if (owner == seat) {
-            owner = firstHumanSeat();
+            owner = firstConnectedSeat() >= 0 ? firstConnectedSeat() : firstHeldSeat();
         }
+        broadcast(Protocol.LEFT + " " + seat);
         broadcastLobby();
         broadcast(Protocol.OWNER + " " + owner);
-        if (phase == Phase.PLAYING && game.currentSeat() == seat) {
-            nextTurn(); // It was their turn: hand it to the bot now instead of waiting for the timer.
+        if (phase == Phase.PLAYING && game.currentSeat() == seat && anyConnected()) {
+            nextTurn(); // a bot takes it from here
         }
     }
 
@@ -153,7 +254,7 @@ public final class GameRoom {
             throw new IllegalStateException("The game has already started");
         }
         for (int i = 0; i < seats.length; i++) {
-            if (seats[i] == null) {
+            if (keys[i] == null) {
                 names[i] = botName();
             }
         }
@@ -217,7 +318,10 @@ public final class GameRoom {
         nextTurn();
     }
 
-    /** Announces the next turn, and schedules the bot's move or the human's timer. */
+    /**
+     * Announces the next turn, then waits for the connected player's move (with their timer),
+     * gives an away player a short while before the bot plays for them, or lets the bot play.
+     */
     private void nextTurn() {
         cancelPending();
         broadcastCounts();
@@ -226,15 +330,24 @@ public final class GameRoom {
             return;
         }
         int seat = game.currentSeat();
-        boolean human = seats[seat] != null;
-        int seconds = human ? settings.turnSeconds() : 0;
+        boolean here = seats[seat] != null;
+        boolean away = !here && keys[seat] != null;
+        int seconds = here ? settings.turnSeconds() : 0;
+        turnEndsAt = seconds > 0 ? System.currentTimeMillis() + seconds * 1000L : 0;
         broadcast(Protocol.TURN + " " + seat + " " + (game.isLeading() ? "LEAD" : "FOLLOW") + " " + seconds);
 
+        if (!anyConnected()) {
+            return; // paused until someone comes back
+        }
         int t = ++token;
-        if (!human) {
+        if (here) {
+            if (seconds > 0) {
+                pending = later(seconds * 1000L + TIMER_GRACE_MS, () -> timedOut(t));
+            }
+        } else if (away) {
+            pending = later(timing.awayTurnMs(), () -> botTurn(t));
+        } else {
             pending = later(timing.botDelayMs(), () -> botTurn(t));
-        } else if (seconds > 0) {
-            pending = later(seconds * 1000L + TIMER_GRACE_MS, () -> timedOut(t));
         }
     }
 
@@ -279,7 +392,7 @@ public final class GameRoom {
             broadcast(Protocol.MATCH + " " + best + " " + names[best]);
             phase = Phase.LOBBY;
             for (int i = 0; i < seats.length; i++) {
-                if (seats[i] == null) {
+                if (keys[i] == null) {
                     names[i] = null; // Free bot seats so friends can join the next game.
                 }
             }
@@ -289,6 +402,7 @@ public final class GameRoom {
             phase = Phase.BETWEEN;
             broadcast(Protocol.PHASE + " " + phase.id());
             broadcast(Protocol.NEXT + " " + timing.nextDealSeconds());
+            nextDealAt = System.currentTimeMillis() + timing.nextDealSeconds() * 1000L;
             int t = ++token;
             pending = later(timing.nextDealSeconds() * 1000L, () -> nextDeal(t));
         }
@@ -299,6 +413,47 @@ public final class GameRoom {
             return;
         }
         startDeal();
+    }
+
+    /** Everything a returning player needs to redraw the table, wrapped in RESUME … RESUMED. */
+    private void sendSnapshot(int seat) {
+        PlayerSession p = seats[seat];
+        p.send(Protocol.RESUME);
+        p.send(Protocol.SEAT + " " + seat);
+        p.send(Protocol.TOKEN + " " + keys[seat]);
+        p.send(Protocol.SETTINGS + " " + settings.toWire());
+        p.send(lobbyLine());
+        p.send(Protocol.OWNER + " " + owner);
+        p.send(Protocol.PHASE + " " + phase.id());
+        sendAwaySeats(p, seat);
+        if (match != null && phase != Phase.LOBBY) {
+            p.send(Protocol.DEAL + " " + (phase == Phase.PLAYING ? match.dealsPlayed() + 1 : match.dealsPlayed()));
+            if (match.dealsPlayed() > 0) {
+                p.send(Protocol.SCORES + " " + join(match.lastPenalties()) + " " + join(match.scores()));
+            }
+            p.send(Protocol.HAND + " " + codes(game.player(seat).hand()));
+            p.send(countsLine());
+            if (phase == Phase.PLAYING) {
+                if (game.lastPlay() != null) {
+                    p.send(Protocol.TABLE + " " + game.lastPlaySeat() + " " + codes(game.lastPlay().cards()));
+                }
+                long left = turnEndsAt > 0 ? Math.max(0, (turnEndsAt - System.currentTimeMillis() + 999) / 1000) : 0;
+                p.send(Protocol.TURN + " " + game.currentSeat() + " " + (game.isLeading() ? "LEAD" : "FOLLOW") + " " + left);
+            } else {
+                int winner = game.winnerSeat();
+                p.send(Protocol.WIN + " " + winner + " " + names[winner]);
+                p.send(Protocol.NEXT + " " + Math.max(1, (nextDealAt - System.currentTimeMillis() + 999) / 1000));
+            }
+        }
+        p.send(Protocol.RESUMED);
+    }
+
+    private void sendAwaySeats(PlayerSession p, int self) {
+        for (int i = 0; i < seats.length; i++) {
+            if (i != self && keys[i] != null && seats[i] == null) {
+                p.send(Protocol.AWAY + " " + i);
+            }
+        }
     }
 
     // ---- Helpers ----
@@ -320,6 +475,19 @@ public final class GameRoom {
             pending.cancel(false);
             pending = null;
         }
+    }
+
+    private void cancelGrace(int seat) {
+        if (graceTimers[seat] != null) {
+            graceTimers[seat].cancel(false);
+            graceTimers[seat] = null;
+        }
+    }
+
+    private static String newKey() {
+        byte[] bytes = new byte[16];
+        KEYS.nextBytes(bytes);
+        return HexFormat.of().formatHex(bytes);
     }
 
     private void requireOwner(PlayerSession player) {
@@ -352,9 +520,22 @@ public final class GameRoom {
         return seat;
     }
 
-    private int firstHumanSeat() {
+    private boolean anyConnected() {
+        return firstConnectedSeat() >= 0;
+    }
+
+    private int firstConnectedSeat() {
         for (int i = 0; i < seats.length; i++) {
             if (seats[i] != null) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int firstHeldSeat() {
+        for (int i = 0; i < keys.length; i++) {
+            if (keys[i] != null) {
                 return i;
             }
         }
@@ -389,18 +570,26 @@ public final class GameRoom {
         }
     }
 
-    private void broadcastLobby() {
+    private String lobbyLine() {
         List<String> shown = new ArrayList<>();
         for (String n : names) {
             shown.add(n == null ? "-" : n);
         }
-        broadcast(Protocol.LOBBY + " " + id + " " + String.join(",", shown));
+        return Protocol.LOBBY + " " + id + " " + String.join(",", shown);
+    }
+
+    private void broadcastLobby() {
+        broadcast(lobbyLine());
+    }
+
+    private String countsLine() {
+        return Protocol.COUNTS + " " + game.players().stream()
+                .map(p -> String.valueOf(p.cardCount()))
+                .collect(Collectors.joining(" "));
     }
 
     private void broadcastCounts() {
-        broadcast(Protocol.COUNTS + " " + game.players().stream()
-                .map(p -> String.valueOf(p.cardCount()))
-                .collect(Collectors.joining(" ")));
+        broadcast(countsLine());
     }
 
     private void broadcast(String message) {

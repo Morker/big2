@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Drives rooms through the real protocol, with scripted players standing in for browsers. */
 class GameRoomTest {
 
-    private static final RoomTiming FAST = new RoomTiming(5, 1);
+    private static final RoomTiming FAST = new RoomTiming(5, 1, 50, 300, 1500);
 
     /** A player that reads protocol lines and answers its own turns with the weakest legal move. */
     private static final class Agent implements Runnable {
@@ -230,8 +230,99 @@ class GameRoomTest {
         second.session.handle("JOIN " + roomCode(first) + " Sam");
         assertTrue(second.last("LOBBY").endsWith("Sam,Sam2,-,-"));
 
-        first.session.disconnected();
-        second.session.disconnected();
+        // Leaving on purpose frees the room at once.
+        first.session.handle("QUIT");
+        second.session.handle("QUIT");
         assertEquals(0, rooms.size());
+    }
+
+    // ---- Reconnecting ----
+
+    /** Waits up to two seconds for a condition that other threads (timers, bots) will make true. */
+    private static void await(String what, java.util.function.BooleanSupplier condition) throws InterruptedException {
+        long until = System.currentTimeMillis() + 2000;
+        while (!condition.getAsBoolean()) {
+            if (System.currentTimeMillis() > until) {
+                throw new AssertionError("Timed out waiting for: " + what);
+            }
+            Thread.sleep(10);
+        }
+    }
+
+    private static String key(Agent agent) {
+        return agent.last("TOKEN").split(" ")[1];
+    }
+
+    @Test
+    void aDroppedPlayerKeepsTheirSeatAndCanComeBack() throws Exception {
+        RoomManager rooms = new RoomManager(FAST);
+        Agent alice = new Agent(rooms);
+        Agent bob = new Agent(rooms);
+        alice.session.handle("CREATE Alice");
+        bob.session.handle("JOIN " + roomCode(alice) + " Bob");
+
+        bob.session.disconnected();
+        assertEquals("AWAY 1", alice.last("AWAY"));
+        assertTrue(alice.last("LOBBY").endsWith("Alice,Bob,-,-"), "the seat is still Bob's");
+
+        Agent bobAgain = new Agent(rooms);
+        bobAgain.session.handle("REJOIN " + roomCode(alice) + " " + key(bob));
+        assertEquals("SEAT 1", bobAgain.last("SEAT"));
+        assertTrue(bobAgain.log.contains("RESUME") && bobAgain.log.contains("RESUMED"), "a snapshot is sent");
+        assertEquals("BACK 1", alice.last("BACK"));
+
+        // Long after the grace period, Bob is still seated because he came back.
+        Thread.sleep(400);
+        assertEquals(0, alice.count("LEFT"));
+    }
+
+    @Test
+    void aSeatIsFreedWhenTheGracePeriodRunsOutOrThePlayerQuits() throws Exception {
+        RoomManager rooms = new RoomManager(FAST);
+        Agent alice = new Agent(rooms);
+        Agent bob = new Agent(rooms);
+        Agent carol = new Agent(rooms);
+        alice.session.handle("CREATE Alice");
+        bob.session.handle("JOIN " + roomCode(alice) + " Bob");
+        carol.session.handle("JOIN " + roomCode(alice) + " Carol");
+
+        bob.session.disconnected();
+        await("Bob's seat to be released", () -> "LEFT 1".equals(alice.last("LEFT")));
+        assertTrue(alice.last("LOBBY").endsWith("Alice,-,Carol,-"));
+
+        carol.session.handle("QUIT");
+        assertEquals("LEFT 2", alice.last("LEFT"), "quitting frees the seat at once");
+
+        Agent late = new Agent(rooms);
+        late.session.handle("REJOIN " + roomCode(alice) + " " + key(bob));
+        assertTrue(late.last("ERROR").contains("given up"));
+    }
+
+    @Test
+    void theTablePausesWhileEveryoneIsAwayAndPicksUpOnReturn() throws Exception {
+        RoomManager rooms = new RoomManager(FAST);
+        Agent alice = new Agent(rooms);
+        alice.session.handle("CREATE Alice");
+        alice.session.handle("SET timer 0");
+        alice.session.handle("START");
+        await("the deal", () -> alice.count("HAND") > 0);
+        // Let the bots play until it is Alice's turn, then drop her connection.
+        await("Alice's turn", () -> alice.last("TURN") != null && alice.last("TURN").startsWith("TURN 0 "));
+        alice.session.disconnected();
+
+        long movesBefore = alice.count("PLAYED") + alice.count("PASSED");
+        Thread.sleep(300); // well past the 50 ms away-turn wait
+        assertEquals(movesBefore, alice.count("PLAYED") + alice.count("PASSED"), "nothing happens while nobody is here");
+
+        Agent back = new Agent(rooms);
+        back.session.handle("REJOIN " + roomCode(alice) + " " + key(alice));
+        List<String> snapshot = new ArrayList<>(back.log);
+        int start = snapshot.indexOf("RESUME"), end = snapshot.indexOf("RESUMED");
+        assertTrue(start >= 0 && end > start, "a snapshot is sent: " + snapshot);
+        List<String> body = snapshot.subList(start, end);
+        assertTrue(body.stream().anyMatch(l -> l.startsWith("HAND ")), "your cards");
+        assertTrue(body.stream().anyMatch(l -> l.startsWith("COUNTS ")), "everyone's card counts");
+        assertTrue(body.stream().anyMatch(l -> l.startsWith("TURN 0 ")), "whose turn it is");
+        assertTrue(back.last("TURN").startsWith("TURN 0 "), "and it is still Alice's turn");
     }
 }

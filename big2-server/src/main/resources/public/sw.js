@@ -1,7 +1,7 @@
 // Service worker: makes Big 2 installable and quick to open.
 // Game files are fetched from the network first (so updates show up straight away) and fall back
 // to the saved copy when offline. The game itself needs the server, so nothing here touches /ws.
-const CACHE = 'big2-v3';
+const CACHE = 'big2-v4';
 const SHELL = [
   '/',
   '/index.html',

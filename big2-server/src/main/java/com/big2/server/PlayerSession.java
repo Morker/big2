@@ -54,6 +54,13 @@ public final class PlayerSession {
                     }
                     enterRoom(args[0], args[1]);
                 }
+                case Protocol.REJOIN -> {
+                    String[] args = rest.split("\\s+");
+                    if (args.length < 2) {
+                        throw new IllegalArgumentException("Usage: REJOIN <room> <key>");
+                    }
+                    rejoin(args[0], args[1]);
+                }
                 case Protocol.SET -> {
                     String[] kv = rest.split("\\s+", 2);
                     if (kv.length < 2) {
@@ -69,6 +76,9 @@ public final class PlayerSession {
                 case Protocol.PASS -> requireRoom().pass(this);
                 case Protocol.REACT -> requireRoom().react(this, rest.trim());
                 case Protocol.QUIT -> {
+                    if (room != null) {
+                        room.quit(this);
+                    }
                     return false;
                 }
                 default -> send(Protocol.ERROR + " Unknown command: " + command);
@@ -90,6 +100,18 @@ public final class PlayerSession {
         name = requestedName;
         GameRoom target = code == null ? rooms.create() : rooms.getOrCreate(code);
         target.join(this);
+        room = target;
+    }
+
+    private void rejoin(String code, String key) {
+        if (room != null) {
+            throw new IllegalStateException("You are already in room " + room.id());
+        }
+        GameRoom target = rooms.find(code);
+        if (target == null) {
+            throw new IllegalStateException("That game has ended. Join or create a new one.");
+        }
+        target.rejoin(this, key);
         room = target;
     }
 

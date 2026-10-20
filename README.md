@@ -125,8 +125,9 @@ See `Protocol.java` for every message.
 - [x] Week 6 – Server with rooms, bots filling empty seats
 - [x] Web client with lobby, room owner settings, five rooms and five decks
 - [x] Turn timer, scoring across deals, configurable house rules
-- [ ] Reconnect to your seat after a dropped connection
-- [ ] Portrait layout for phones, chat, sound
+- [x] Reconnect to your seat after a dropped connection
+- [x] Portrait layout for phones, reactions, sound
+- [ ] Chat
 - [ ] Deploy the server, demo GIF
 
 ## Design decisions

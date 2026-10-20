@@ -36,6 +36,11 @@ public final class RoomManager {
         return rooms.computeIfAbsent(id, this::newRoom);
     }
 
+    /** The room with this code, or null if there isn't one (it never existed or has closed). */
+    public synchronized GameRoom find(String code) {
+        return rooms.get(code.trim().toUpperCase());
+    }
+
     /** Creates a room with a fresh, unused code. */
     public synchronized GameRoom create() {
         String id;
