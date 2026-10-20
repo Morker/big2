@@ -1,7 +1,7 @@
 package com.big2.server.room;
 
 import com.big2.core.ai.Bot;
-import com.big2.core.ai.SimpleBot;
+import com.big2.core.ai.BotLevel;
 import com.big2.core.card.Card;
 import com.big2.core.game.Game;
 import com.big2.core.game.InvalidMoveException;
@@ -56,7 +56,7 @@ public final class GameRoom {
     private final Consumer<GameRoom> onEmpty;
     private final PlayerSession[] seats = new PlayerSession[Game.PLAYER_COUNT];
     private final String[] names = new String[Game.PLAYER_COUNT];
-    private final Bot bot = new SimpleBot();
+    private Bot bot = BotLevel.NORMAL.create();
     private final Random random = new Random();
 
     private GameSettings settings = GameSettings.DEFAULT;
@@ -153,6 +153,7 @@ public final class GameRoom {
             }
         }
         match = new Match(settings);
+        bot = settings.bots().create();
         broadcastLobby();
         startDeal();
     }

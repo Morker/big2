@@ -4,13 +4,18 @@
   const $ = sel => document.querySelector(sel);
   const ROOM_IDS = ['gold-room', 'library', 'salon', 'tea-house', 'studio'];
   const DECK_IDS = ['noir', 'classic', 'deco', 'teahouse', 'blueprint'];
+  const BOT_NOTES = {
+    easy: 'Plays the weakest card that beats the table, every time. Good for learning.',
+    normal: 'Plans its hand, keeps its combinations together, saves its 2s and plays hard when someone is nearly out.',
+    hard: "Everything Normal does, plus it counts cards and remembers who passed, to know when its plays can't be beaten."
+  };
   const DECK_NOTES = { noir: 'Black and gold', classic: 'Ivory and burgundy', deco: 'Navy and cream', teahouse: 'Ink and vermilion', blueprint: 'Outlined pips' };
 
   const S = {
     view: 'home',
     room: null, mySeat: 0, owner: -1,
     names: [null, null, null, null], tableNames: [null, null, null, null],
-    settings: { room: 'gold-room', deck: 'noir', mode: 'single', points: 50, rounds: 5, timer: 30, twos: false, wrap: false, every3d: true },
+    settings: { room: 'gold-room', deck: 'noir', mode: 'single', points: 50, rounds: 5, timer: 30, twos: false, wrap: false, every3d: true, bots: 'normal' },
     phase: 'lobby', deal: 0,
     hand: [], selected: new Set(), counts: [0, 0, 0, 0],
     turn: -1, leading: true, turnSeconds: 0, turnDeadline: 0,
@@ -214,7 +219,8 @@
     return {
       room: s.room, deck: s.deck, mode: s.mode,
       points: Number(s.points), rounds: Number(s.rounds), timer: Number(s.timer),
-      twos: s.twos === 'on', wrap: s.wrap === 'on', every3d: s.every3d === 'on'
+      twos: s.twos === 'on', wrap: s.wrap === 'on', every3d: s.every3d === 'on',
+      bots: s.bots || 'normal'
     };
   }
 
@@ -291,6 +297,8 @@
     renderPickers();
     const st = S.settings;
     document.querySelectorAll('input[name="mode"]').forEach(i => { i.checked = i.value === st.mode; });
+    document.querySelectorAll('input[name="bots"]').forEach(i => { i.checked = i.value === st.bots; });
+    $('#bots-note').textContent = BOT_NOTES[st.bots] || '';
     $('#mode-points').hidden = st.mode !== 'points';
     $('#mode-rounds').hidden = st.mode !== 'rounds';
     $('#mode-single').hidden = st.mode !== 'single';
@@ -493,6 +501,7 @@
   $('#room-picker').addEventListener('change', e => { if (e.target.name === 'room') send('SET room ' + e.target.value); });
   $('#deck-picker').addEventListener('change', e => { if (e.target.name === 'deck') send('SET deck ' + e.target.value); });
   document.querySelectorAll('input[name="mode"]').forEach(i => i.addEventListener('change', () => send('SET mode ' + i.value)));
+  document.querySelectorAll('input[name="bots"]').forEach(i => i.addEventListener('change', () => send('SET bots ' + i.value)));
   $('#points-input').addEventListener('change', e => send('SET points ' + e.target.value));
   $('#rounds-input').addEventListener('change', e => send('SET rounds ' + e.target.value));
   $('#timer-select').addEventListener('change', e => send('SET timer ' + e.target.value));

@@ -42,6 +42,9 @@ public final class Game {
     private int passesInRow;
     private boolean firstMove;
     private Player winner;
+    private final List<Card> played = new ArrayList<>();
+    /** passedOn[seat][size]: the weakest hand of that size the seat chose not to beat (null if none). */
+    private final Hand[][] passedOn = new Hand[PLAYER_COUNT][6];
 
     /** Starts a game with a freshly shuffled deck. */
     public Game(List<String> names, Random random) {
@@ -127,6 +130,7 @@ public final class Game {
         }
 
         player.remove(hand.cards());
+        played.addAll(hand.cards());
         lastPlay = hand;
         lastPlaySeat = seat;
         passesInRow = 0;
@@ -145,6 +149,10 @@ public final class Game {
         checkTurn(seat);
         if (isLeading()) {
             throw new InvalidMoveException("You are leading, so you can't pass");
+        }
+        Hand weakest = passedOn[seat][lastPlay.size()];
+        if (weakest == null || weakest.beats(lastPlay)) {
+            passedOn[seat][lastPlay.size()] = lastPlay;
         }
         passesInRow++;
         if (passesInRow == PLAYER_COUNT - 1) {
@@ -177,6 +185,20 @@ public final class Game {
     }
 
     // ---- Read-only state, used by bots, the server and the UI ----
+
+    /** Every card played so far this deal, in order. Public knowledge, so bots may count cards. */
+    /**
+     * The weakest hand of {@code size} cards this seat has passed on this deal, or null.
+     * Public knowledge: everyone at the table saw them pass. Players only lose cards, so if they
+     * couldn't (or wouldn't) beat it then, they are unlikely to beat it now.
+     */
+    public Hand passedOn(int seat, int size) {
+        return size < passedOn[seat].length ? passedOn[seat][size] : null;
+    }
+
+    public List<Card> playedCards() {
+        return Collections.unmodifiableList(played);
+    }
 
     public HouseRules rules() {
         return rules;

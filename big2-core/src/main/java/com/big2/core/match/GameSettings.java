@@ -1,5 +1,6 @@
 package com.big2.core.match;
 
+import com.big2.core.ai.BotLevel;
 import com.big2.core.game.HouseRules;
 
 import java.util.List;
@@ -17,9 +18,10 @@ import java.util.List;
  * @param rounds      {@link Mode#ROUNDS}: the number of deals to play
  * @param turnSeconds seconds a human gets per turn, or 0 for no timer
  * @param rules       house rule switches
+ * @param bots        how well the computer players play
  */
 public record GameSettings(String room, String deck, Mode mode, int pointLimit, int rounds,
-                           int turnSeconds, HouseRules rules) {
+                           int turnSeconds, HouseRules rules, BotLevel bots) {
 
     public enum Mode {
         /** One deal; first to empty their hand wins. */
@@ -45,7 +47,7 @@ public record GameSettings(String room, String deck, Mode mode, int pointLimit, 
     public static final int MAX_TIMER = 120;
 
     public static final GameSettings DEFAULT =
-            new GameSettings("gold-room", "noir", Mode.SINGLE, 50, 5, 30, HouseRules.STANDARD);
+            new GameSettings("gold-room", "noir", Mode.SINGLE, 50, 5, 30, HouseRules.STANDARD, BotLevel.NORMAL);
 
     /** The deck that matches a room. */
     public static String pairedDeck(String room) {
@@ -65,37 +67,38 @@ public record GameSettings(String room, String deck, Mode mode, int pointLimit, 
                 if (!ROOMS.contains(v)) {
                     throw new IllegalArgumentException("Unknown room: " + value);
                 }
-                yield new GameSettings(v, pairedDeck(v), mode, pointLimit, rounds, turnSeconds, rules);
+                yield new GameSettings(v, pairedDeck(v), mode, pointLimit, rounds, turnSeconds, rules, bots);
             }
             case "deck" -> {
                 if (!DECKS.contains(v)) {
                     throw new IllegalArgumentException("Unknown deck: " + value);
                 }
-                yield new GameSettings(room, v, mode, pointLimit, rounds, turnSeconds, rules);
+                yield new GameSettings(room, v, mode, pointLimit, rounds, turnSeconds, rules, bots);
             }
-            case "mode" -> new GameSettings(room, deck, parseMode(v), pointLimit, rounds, turnSeconds, rules);
+            case "mode" -> new GameSettings(room, deck, parseMode(v), pointLimit, rounds, turnSeconds, rules, bots);
             case "points" -> new GameSettings(room, deck, mode,
-                    number(v, MIN_POINTS, MAX_POINTS, "Point limit"), rounds, turnSeconds, rules);
+                    number(v, MIN_POINTS, MAX_POINTS, "Point limit"), rounds, turnSeconds, rules, bots);
             case "rounds" -> new GameSettings(room, deck, mode, pointLimit,
-                    number(v, 1, MAX_ROUNDS, "Rounds"), turnSeconds, rules);
+                    number(v, 1, MAX_ROUNDS, "Rounds"), turnSeconds, rules, bots);
             case "timer" -> {
                 int seconds = number(v, 0, MAX_TIMER, "Turn timer");
                 if (seconds != 0 && seconds < MIN_TIMER) {
                     throw new IllegalArgumentException("Turn timer must be 0 (off) or at least " + MIN_TIMER + " seconds");
                 }
-                yield new GameSettings(room, deck, mode, pointLimit, rounds, seconds, rules);
+                yield new GameSettings(room, deck, mode, pointLimit, rounds, seconds, rules, bots);
             }
             case "twos" -> new GameSettings(room, deck, mode, pointLimit, rounds, turnSeconds,
-                    new HouseRules(flag(v), r.wrapStraights(), r.threeOfDiamondsEveryDeal()));
+                    new HouseRules(flag(v), r.wrapStraights(), r.threeOfDiamondsEveryDeal()), bots);
             case "wrap" -> new GameSettings(room, deck, mode, pointLimit, rounds, turnSeconds,
-                    new HouseRules(r.twosInStraights(), flag(v), r.threeOfDiamondsEveryDeal()));
+                    new HouseRules(r.twosInStraights(), flag(v), r.threeOfDiamondsEveryDeal()), bots);
             case "every3d" -> new GameSettings(room, deck, mode, pointLimit, rounds, turnSeconds,
-                    new HouseRules(r.twosInStraights(), r.wrapStraights(), flag(v)));
+                    new HouseRules(r.twosInStraights(), r.wrapStraights(), flag(v)), bots);
+            case "bots" -> new GameSettings(room, deck, mode, pointLimit, rounds, turnSeconds, rules, BotLevel.fromId(v));
             default -> throw new IllegalArgumentException("Unknown setting: " + key);
         };
     }
 
-    /** e.g. {@code room=gold-room deck=noir mode=points points=50 rounds=5 timer=30 twos=off wrap=off every3d=on} */
+    /** e.g. {@code room=gold-room deck=noir mode=points points=50 rounds=5 timer=30 twos=off wrap=off every3d=on bots=normal} */
     public String toWire() {
         return "room=" + room
                 + " deck=" + deck
@@ -105,7 +108,8 @@ public record GameSettings(String room, String deck, Mode mode, int pointLimit, 
                 + " timer=" + turnSeconds
                 + " twos=" + onOff(rules.twosInStraights())
                 + " wrap=" + onOff(rules.wrapStraights())
-                + " every3d=" + onOff(rules.threeOfDiamondsEveryDeal());
+                + " every3d=" + onOff(rules.threeOfDiamondsEveryDeal())
+                + " bots=" + bots.id();
     }
 
     /** Reads {@link #toWire()} output. Keys must appear as room before deck, which toWire guarantees. */
