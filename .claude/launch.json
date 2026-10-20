@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "big2-server",
-      "runtimeExecutable": "C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.12.101-hotspot\\bin\\java.exe",
+      "runtimeExecutable": "java",
       "runtimeArgs": ["-jar", "big2-server/target/big2-server.jar", "--static=big2-server/src/main/resources/public"],
       "port": 8090
     }

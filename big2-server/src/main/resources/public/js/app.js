@@ -21,7 +21,7 @@
     turn: -1, leading: true, turnSeconds: 0, turnDeadline: 0,
     table: [], tableOwner: -1, playsThisDeal: 0, lastAction: '', lastPass: '',
     penalties: [0, 0, 0, 0], scores: [0, 0, 0, 0], dealWinner: -1,
-    overlay: null, nextAt: 0, matchWinner: -1, lastResult: null,
+    overlay: null, nextAt: 0, matchWinner: -1, lastResult: null, reveal: [[], [], [], []],
     leaveArmed: false,
     key: null, away: new Set(), restoring: false, reconnecting: false, rejoining: false
   };
@@ -40,7 +40,8 @@
   const orientation = () => (window.innerHeight > window.innerWidth ? 'portrait' : 'landscape');
 
   function animate(kind, data) {
-    if (reduceMotion || S.restoring) return;
+    // Reactions are messages from other players, so they show even with reduced motion (as a plain fade).
+    if (S.restoring || (reduceMotion && kind !== 'react')) return;
     const entry = Object.assign({ start: performance.now() }, data);
     if (kind === 'pass') A.passes.push(entry);
     else if (kind === 'react') A.reactions.push(entry);
@@ -243,6 +244,7 @@
         S.deal = Number(rest);
         S.table = []; S.tableOwner = -1; S.playsThisDeal = 0;
         S.lastAction = ''; S.lastPass = ''; S.selected.clear(); S.dealWinner = -1; S.revealUntil = 0;
+        S.reveal = [[], [], [], []];
         if (S.deal === 1) { S.scores = [0, 0, 0, 0]; S.matchWinner = -1; }
         A = { deal: null, play: null, shift: null, sweep: null, shake: null, passes: [], reactions: [] };
         animate('deal');
@@ -306,6 +308,11 @@
         const seat = Number(rest);
         toast(seat === S.mySeat ? 'Your time ran out, so the server moved for you.' : `${who(seat)} ran out of time.`);
         break;
+      }
+      case 'REVEAL': {
+        const [seat, ...cards] = rest.trim().split(/\s+/);
+        S.reveal[Number(seat)] = cards.filter(Boolean).sort((a, b) => Cards.strength(a) - Cards.strength(b));
+        return; // drawn with the results
       }
       case 'WIN':
         S.revealUntil = Date.now() + REVEAL_MS;
@@ -567,7 +574,7 @@
     const rows = [0, 1, 2, 3].sort((a, b) => S.scores[a] - S.scores[b]);
     const showTotals = S.settings.mode !== 'single';
     const table = `<table><thead><tr><th>Player</th><th class="num">This deal</th>${showTotals ? '<th class="num">Total</th>' : ''}</tr></thead><tbody>` +
-      rows.map(seat => `<tr class="${(S.overlay === 'match' ? seat === S.matchWinner : seat === S.dealWinner) ? 'win' : ''}"><td>${esc(who(seat))}</td><td class="num">${S.penalties[seat] ? '+' + S.penalties[seat] : '0'}</td>${showTotals ? `<td class="num">${S.scores[seat]}</td>` : ''}</tr>`).join('') +
+      rows.map(seat => `<tr class="${(S.overlay === 'match' ? seat === S.matchWinner : seat === S.dealWinner) ? 'win' : ''}"><td>${esc(who(seat))}${leftoverCards(seat)}</td><td class="num">${S.penalties[seat] ? '+' + S.penalties[seat] : '0'}</td>${showTotals ? `<td class="num">${S.scores[seat]}</td>` : ''}</tr>`).join('') +
       '</tbody></table>';
 
     if (S.overlay === 'deal') {
@@ -586,6 +593,13 @@
           : `<div class="foot"><span class="muted">Waiting for ${esc(S.names[S.owner] || 'the host')} to start the next game.</span>` +
             `<button type="button" class="btn" id="to-lobby-btn">Back to lobby</button></div></div>`);
     }
+  }
+
+  /** The cards a player was left holding when the deal ended. */
+  function leftoverCards(seat) {
+    const cards = S.reveal[seat] || [];
+    if (!cards.length) return seat === S.dealWinner ? '<div class="left-cards out">Went out</div>' : '';
+    return `<div class="left-cards" aria-label="${cards.length} cards left">${cards.map(c => Cards.card(S.settings.deck, c)).join('')}</div>`;
   }
 
   let lastTickSecond = 0;

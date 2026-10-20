@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Drives rooms through the real protocol, with scripted players standing in for browsers. */
 class GameRoomTest {
 
-    private static final RoomTiming FAST = new RoomTiming(5, 1, 50, 300, 1500);
+    private static final RoomTiming FAST = new RoomTiming(5, 5, 1, 50, 300, 1500);
 
     /** A player that reads protocol lines and answers its own turns with the weakest legal move. */
     private static final class Agent implements Runnable {
@@ -154,6 +154,11 @@ class GameRoomTest {
         assertEquals(2, alice.count("WIN"));
         assertEquals(2, bob.count("SCORES"));
         assertEquals(1, alice.count("NEXT"), "one pause between the two deals");
+        assertEquals(8, bob.count("REVEAL"), "every seat's leftover cards, after each deal");
+        int winner = Integer.parseInt(alice.last("WIN").split(" ")[1]);
+        assertEquals("REVEAL " + winner, alice.log.stream()
+                .filter(l -> l.startsWith("REVEAL " + winner)).reduce((a, b) -> b).orElseThrow(),
+                "the winner has no cards left");
         assertTrue(alice.last("SETTINGS").contains("mode=rounds"));
     }
 

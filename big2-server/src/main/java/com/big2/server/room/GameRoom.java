@@ -88,6 +88,8 @@ public final class GameRoom {
     private int token;
     private long turnEndsAt;
     private long nextDealAt;
+    /** When cards last landed on the table, so bots leave time to see them. */
+    private long lastPlayAt;
     private boolean closed;
 
     GameRoom(String id, ScheduledExecutorService scheduler, RoomTiming timing, Consumer<GameRoom> onEmpty) {
@@ -271,6 +273,7 @@ public final class GameRoom {
         requirePlaying();
         try {
             Hand hand = game.play(seat, cards);
+            lastPlayAt = System.currentTimeMillis();
             broadcast(Protocol.PLAYED + " " + seat + " " + codes(hand.cards()));
             sendHand(seat);
             nextTurn();
@@ -347,7 +350,9 @@ public final class GameRoom {
         } else if (away) {
             pending = later(timing.awayTurnMs(), () -> botTurn(t));
         } else {
-            pending = later(timing.botDelayMs(), () -> botTurn(t));
+            long sinceLastPlay = System.currentTimeMillis() - lastPlayAt;
+            long wait = Math.max(timing.botDelayMs(), timing.playShowMs() - sinceLastPlay);
+            pending = later(wait, () -> botTurn(t));
         }
     }
 
@@ -357,6 +362,9 @@ public final class GameRoom {
         }
         int seat = game.currentSeat();
         Optional<Hand> move = bot.takeTurn(game, seat);
+        if (move.isPresent()) {
+            lastPlayAt = System.currentTimeMillis();
+        }
         broadcast(move.map(h -> Protocol.PLAYED + " " + seat + " " + codes(h.cards()))
                 .orElse(Protocol.PASSED + " " + seat));
         nextTurn();
@@ -372,6 +380,7 @@ public final class GameRoom {
         if (game.isLeading()) {
             Card lowest = game.player(seat).hand().get(0);
             game.play(seat, List.of(lowest));
+            lastPlayAt = System.currentTimeMillis();
             broadcast(Protocol.PLAYED + " " + seat + " " + lowest.code());
             sendHand(seat);
         } else {
@@ -384,6 +393,7 @@ public final class GameRoom {
     private void endDeal() {
         match.finishDeal();
         int winner = game.winnerSeat();
+        broadcastReveals();
         broadcast(Protocol.WIN + " " + winner + " " + names[winner]);
         broadcast(Protocol.SCORES + " " + join(match.lastPenalties()) + " " + join(match.scores()));
 
@@ -441,6 +451,9 @@ public final class GameRoom {
                 p.send(Protocol.TURN + " " + game.currentSeat() + " " + (game.isLeading() ? "LEAD" : "FOLLOW") + " " + left);
             } else {
                 int winner = game.winnerSeat();
+                for (int i = 0; i < seats.length; i++) {
+                    p.send(revealLine(i));
+                }
                 p.send(Protocol.WIN + " " + winner + " " + names[winner]);
                 p.send(Protocol.NEXT + " " + Math.max(1, (nextDealAt - System.currentTimeMillis() + 999) / 1000));
             }
@@ -567,6 +580,18 @@ public final class GameRoom {
     private void sendHand(int seat) {
         if (seats[seat] != null) {
             seats[seat].send(Protocol.HAND + " " + codes(game.player(seat).hand()));
+        }
+    }
+
+    /** The cards a seat still holds, shown to everyone once the deal is over. */
+    private String revealLine(int seat) {
+        List<Card> left = game.player(seat).hand();
+        return Protocol.REVEAL + " " + seat + (left.isEmpty() ? "" : " " + codes(left));
+    }
+
+    private void broadcastReveals() {
+        for (int i = 0; i < seats.length; i++) {
+            broadcast(revealLine(i));
         }
     }
 

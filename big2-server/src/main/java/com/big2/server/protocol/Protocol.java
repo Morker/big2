@@ -43,6 +43,7 @@ package com.big2.server.protocol;
  * PASSED &lt;seat&gt;
  * REACT &lt;seat&gt; &lt;id&gt;            someone sent a reaction
  * TIMEOUT &lt;seat&gt;                   their timer ran out; the move that follows was automatic
+ * REVEAL &lt;seat&gt; [card...]        when a deal ends: the cards that seat still holds (one line per seat)
  * WIN &lt;seat&gt; &lt;name&gt;                won the deal
  * SCORES &lt;p0..p3&gt; &lt;t0..t3&gt;        this deal's penalties, then match totals
  * NEXT &lt;seconds&gt;                   the next deal starts in this many seconds
@@ -90,6 +91,7 @@ public final class Protocol {
     public static final String PLAYED = "PLAYED";
     public static final String PASSED = "PASSED";
     public static final String TIMEOUT = "TIMEOUT";
+    public static final String REVEAL = "REVEAL";
     public static final String WIN = "WIN";
     public static final String SCORES = "SCORES";
     public static final String NEXT = "NEXT";
