@@ -158,6 +158,33 @@ class GameRoomTest {
     }
 
     @Test
+    void hostCanPlayAgainStraightAfterAGameEnds() throws Exception {
+        RoomManager rooms = new RoomManager(FAST);
+        Agent alice = new Agent(rooms);
+        alice.session.handle("CREATE Alice");
+        alice.session.handle("SET timer 0");
+        alice.session.handle("SET bots hard");
+
+        Thread first = Thread.ofVirtual().start(alice);
+        alice.session.handle("START");
+        first.join(60_000);
+        String firstResult = alice.matchLine;
+        assertNotNull(firstResult, "first game should finish");
+
+        // Play again: no new room, no settings, just START.
+        alice.matchLine = null;
+        Thread second = Thread.ofVirtual().start(alice);
+        alice.session.handle("START");
+        second.join(60_000);
+
+        assertNotNull(alice.matchLine, "second game should finish");
+        assertEquals(2, alice.count("MATCH"));
+        assertEquals(2, alice.count("DEAL"), "one deal per game in single mode");
+        assertTrue(alice.last("SETTINGS").contains("bots=hard"), "settings carry over");
+        assertEquals(0, alice.count("ERROR"));
+    }
+
+    @Test
     void onlyTheOwnerChangesSettingsAndOwnershipPassesOn() {
         RoomManager rooms = new RoomManager(FAST);
         Agent alice = new Agent(rooms);

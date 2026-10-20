@@ -115,7 +115,7 @@
         break;
       case 'PHASE':
         S.phase = rest;
-        if (rest === 'playing') { S.view = 'table'; S.overlay = null; }
+        if (rest === 'playing') { S.view = 'table'; S.overlay = null; S.restarting = false; }
         if (rest === 'lobby' && S.overlay !== 'match') S.view = 'lobby';
         break;
       case 'DEAL':
@@ -410,8 +410,12 @@
         ? `${esc(who(S.matchWinner))} ${S.matchWinner === S.mySeat ? 'win' : 'wins'}!`
         : `${esc(who(S.matchWinner))} ${S.matchWinner === S.mySeat ? 'win' : 'wins'} the game`;
       ov.innerHTML = `<div class="result" role="dialog" aria-label="Game results"><div class="eyebrow">Game over</div><h2>${title}</h2>${table}` +
-        `<div class="foot"><span class="muted">${isOwner() ? 'Change the table or rules in the lobby, then start again.' : 'The host can start a new game from the lobby.'}</span>` +
-        `<button type="button" class="btn primary" id="to-lobby-btn">Back to lobby</button></div></div>`;
+        (isOwner()
+          ? `<div class="foot"><span class="muted">Same room, players and settings.</span><span class="row">` +
+            `<button type="button" class="btn" id="to-lobby-btn">Change settings</button>` +
+            `<button type="button" class="btn primary" id="play-again-btn"${S.restarting ? ' disabled' : ''}>${S.restarting ? 'Starting…' : 'Play again'}</button></span></div></div>`
+          : `<div class="foot"><span class="muted">Waiting for ${esc(S.names[S.owner] || 'the host')} to start the next game.</span>` +
+            `<button type="button" class="btn" id="to-lobby-btn">Back to lobby</button></div></div>`);
     }
   }
 
@@ -535,6 +539,10 @@
       else { S.leaveArmed = true; renderHud(); setTimeout(() => { S.leaveArmed = false; if (S.view === 'table') renderHud(); }, 4000); }
       return;
     }
+    if (e.target.id === 'play-again-btn') {
+      playAgain();
+      return;
+    }
     if (e.target.id === 'to-lobby-btn') {
       S.overlay = null;
       S.tableNames = [...S.names];
@@ -557,10 +565,20 @@
 
   document.addEventListener('keydown', e => {
     if (S.view !== 'table' || e.target.matches('input, select, textarea')) return;
-    if (e.key === 'Enter') playSelected();
+    if (e.key === 'Enter' && S.overlay === 'match') playAgain();
+    else if (e.key === 'Enter') playSelected();
     else if (e.key === 'p' || e.key === 'P') { if (S.turn === S.mySeat && !S.leading) send('PASS'); }
     else if (e.key === 'Escape' && $('#sound-dialog').hidden) { S.selected.clear(); renderTable(); }
   });
+
+  function playAgain() {
+    if (!isOwner() || S.restarting) return;
+    S.restarting = true;
+    renderOverlay();
+    send('START');
+    // If the server refuses (for example someone is mid-join), let the host try again.
+    setTimeout(() => { if (S.restarting) { S.restarting = false; if (S.view === 'table') renderOverlay(); } }, 4000);
+  }
 
   function leaveRoom() {
     leaving = true;

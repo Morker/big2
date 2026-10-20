@@ -169,6 +169,10 @@ input[type="number"] { width: 90px; }
 .result td.num, .result th.num { text-align: right; }
 .result tr.win td { color: var(--accent); font-weight: 600; }
 .result .foot { margin-top: 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.result { min-width: 0; }
+.result .foot .row { flex-wrap: wrap; flex: 1 1 auto; justify-content: flex-end; }
+.result .foot .row .btn { flex: 1 1 auto; }
+#play-again-btn { min-width: 9em; }
 
 /* Phones held upright: one compact row across the top, scores as a 2-row strip. */
 @media (orientation: portrait) {
