@@ -50,6 +50,9 @@ input[type="number"] { width: 90px; }
 .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; margin: 22px 0 14px; }
 .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .hint { color: var(--muted); font-size: 13px; margin: 14px 0 0; text-align: left; }
+.install { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); text-align: left; }
+.install .btn { width: 100%; }
+.install .hint { margin: 0; }
 
 /* ---------- Lobby ---------- */
 #lobby { max-width: 1200px; margin: 0 auto; padding-inline: clamp(16px, 3vw, 32px); padding-block: 24px 48px; }

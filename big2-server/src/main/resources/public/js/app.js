@@ -545,6 +545,43 @@
     render();
   }
 
+  // ---------- Installing as an app (PWA) ----------
+
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  let installPrompt = null;
+
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => { /* the game still works without it */ });
+    });
+  }
+
+  // Chrome, Edge and Android offer an install prompt we can trigger from our own button.
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    installPrompt = e;
+    $('#install').hidden = false;
+    $('#install-btn').hidden = false;
+  });
+  $('#install-btn').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice;
+    installPrompt = null;
+    $('#install').hidden = true;
+  });
+  window.addEventListener('appinstalled', () => {
+    $('#install').hidden = true;
+    toast('Big 2 is installed. Open it from your home screen.');
+  });
+
+  // iPhone and iPad have no install prompt, so explain the Share menu instead.
+  const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (iOS && !standalone) {
+    $('#install').hidden = false;
+    $('#install-ios').hidden = false;
+  }
+
   // ---------- Start ----------
 
   try { $('#name-input').value = localStorage.getItem('big2-name') || ''; } catch (e) { /* storage unavailable */ }

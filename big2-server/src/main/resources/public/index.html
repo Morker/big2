@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Big 2</title>
   <meta name="description" content="Play Big 2 (Choi Dai Di) with friends in the browser.">
+  <meta name="theme-color" content="#0E1311">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Big 2">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Bodoni+Moda:ital,wght@0,500;0,700;1,500&family=Cormorant+Garamond:ital,wght@0,700;1,700&family=JetBrains+Mono:wght@500;700;800&family=Limelight&display=swap">
@@ -35,6 +43,11 @@
 
     <p id="home-error" class="error" role="alert"></p>
     <p class="hint">Create a room, then send the invite link to your friends. Empty seats are played by bots, so you can also start alone.</p>
+
+    <div id="install" class="install" hidden>
+      <button id="install-btn" type="button" class="btn" hidden>Install the app</button>
+      <p id="install-ios" class="hint" hidden>Install on iPhone: tap <b>Share</b> <span aria-hidden="true">&#x2191;</span> in Safari, then <b>Add to Home Screen</b>.</p>
+    </div>
   </div>
 </main>
 
