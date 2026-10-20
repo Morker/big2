@@ -94,7 +94,9 @@
       case 'LOBBY': {
         const i = rest.indexOf(' ');
         S.room = rest.slice(0, i);
+        const seatedBefore = S.names.filter(Boolean).length;
         S.names = rest.slice(i + 1).split(',').map(n => (n === '-' ? null : n));
+        if (S.view === 'lobby' && S.names.filter(Boolean).length > seatedBefore && seatedBefore > 0) Sound.effect('join');
         // While the final results are showing, keep the names people played under (bot seats get freed now).
         if (S.overlay !== 'match') S.tableNames = [...S.names];
         if (location.hash.slice(1) !== S.room) history.replaceState(null, '', '#' + S.room);
@@ -118,6 +120,7 @@
         if (S.deal === 1) { S.scores = [0, 0, 0, 0]; S.matchWinner = -1; }
         A = { deal: null, play: null, shift: null, sweep: null, passes: [] };
         animate('deal');
+        Sound.effect('deal');
         break;
       case 'HAND': {
         const before = S.hand;
@@ -138,8 +141,10 @@
         S.leading = mode === 'LEAD';
         S.turnSeconds = Number(secs || 0);
         S.turnDeadline = S.turnSeconds > 0 ? Date.now() + S.turnSeconds * 1000 : 0;
+        if (S.turn === S.mySeat) Sound.effect('turn');
         if (S.leading && S.table.length) {
           animate('sweep', { cards: [...S.table], rel: relOf(prevOwner) });
+          Sound.effect('sweep');
           S.lastAction = `${who(prevOwner)} won the trick`;
           S.table = []; S.tableOwner = -1; S.lastPass = '';
         }
@@ -149,6 +154,7 @@
         const parts = rest.split(/\s+/);
         const seat = Number(parts[0]);
         animate('play', { rel: relOf(seat), prevHand: seat === S.mySeat ? [...S.hand] : null });
+        Sound.effect('play', parts.length - 1);
         S.table = parts.slice(1);
         S.tableOwner = seat;
         S.playsThisDeal++;
@@ -160,6 +166,7 @@
       case 'PASSED':
         S.lastPass = `${who(Number(rest))} passed`;
         animate('pass', { rel: relOf(Number(rest)) });
+        Sound.effect('pass');
         break;
       case 'TIMEOUT': {
         const seat = Number(rest);
@@ -169,6 +176,7 @@
       case 'WIN':
         S.dealWinner = Number(rest.split(/\s+/)[0]);
         S.turnDeadline = 0;
+        Sound.effect(S.dealWinner === S.mySeat ? 'win' : 'lose');
         break;
       case 'SCORES': {
         const n = nums();
@@ -183,11 +191,13 @@
       case 'MATCH':
         S.matchWinner = Number(rest.split(/\s+/)[0]);
         S.overlay = 'match';
+        if (S.matchWinner === S.mySeat && S.settings.mode !== 'single') Sound.effect('fanfare');
         S.lastResult = { winner: S.matchWinner, names: [...S.tableNames], scores: [...S.scores], mode: S.settings.mode };
         break;
       case 'ERROR':
         if (S.view === 'home') $('#home-error').textContent = rest;
         else toast(rest, true);
+        Sound.effect('error');
         return;
       default:
         return;
@@ -245,6 +255,7 @@
     $('#table').hidden = S.view !== 'table';
     if (S.view === 'lobby') renderLobby();
     if (S.view === 'table') renderTable();
+    Sound.music(S.view === 'home' ? null : S.settings.room);
   }
 
   const isOwner = () => S.owner === S.mySeat;
@@ -369,7 +380,7 @@
       `<span class="${seat === S.mySeat ? 'me' : ''}">${esc(who(seat))}</span><span class="${seat === S.mySeat ? 'me' : ''}">${S.scores[seat]}</span>`).join('')}</div>` : '';
     $('#hud').innerHTML =
       `<div class="hud-left"><div class="chip"><span class="code">${esc(S.room || '')}</span> &middot; ${modeLine()}</div></div>` +
-      `<div class="hud-right">${board}<div class="chip"><button type="button" class="btn ghost" id="leave-btn">${S.leaveArmed ? 'Leave game? A bot takes your seat' : 'Leave'}</button></div></div>`;
+      `<div class="hud-right">${board}<div class="chip"><button type="button" class="btn ghost" data-open-sound aria-label="Sound settings">Sound</button><button type="button" class="btn ghost" id="leave-btn">${S.leaveArmed ? 'Leave game? A bot takes your seat' : 'Leave'}</button></div></div>`;
   }
 
   function renderOverlay() {
@@ -396,6 +407,7 @@
     }
   }
 
+  let lastTickSecond = 0;
   function tick() {
     if (S.view !== 'table') return;
     const layer = document.getElementById('timer-layer');
@@ -407,6 +419,10 @@
       } else {
         layer.innerHTML = '';
       }
+    }
+    if (S.turnDeadline && S.phase === 'playing' && S.turn === S.mySeat) {
+      const secs = Math.ceil((S.turnDeadline - Date.now()) / 1000);
+      if (secs <= 5 && secs > 0 && secs !== lastTickSecond) { lastTickSecond = secs; Sound.effect('tick'); }
     }
     const next = document.getElementById('next-count');
     if (next) next.textContent = `Next deal in ${Math.max(0, Math.ceil((S.nextAt - Date.now()) / 1000))}s`;
@@ -494,6 +510,7 @@
     if (card) {
       const code = card.getAttribute('data-card');
       if (S.selected.has(code)) S.selected.delete(code); else S.selected.add(code);
+      Sound.effect('select');
       renderTable();
       return;
     }
@@ -533,7 +550,7 @@
     if (S.view !== 'table' || e.target.matches('input, select, textarea')) return;
     if (e.key === 'Enter') playSelected();
     else if (e.key === 'p' || e.key === 'P') { if (S.turn === S.mySeat && !S.leading) send('PASS'); }
-    else if (e.key === 'Escape') { S.selected.clear(); renderTable(); }
+    else if (e.key === 'Escape' && $('#sound-dialog').hidden) { S.selected.clear(); renderTable(); }
   });
 
   function leaveRoom() {
@@ -544,6 +561,51 @@
     pickerKey = '';
     render();
   }
+
+  // ---------- Sound settings ----------
+
+  // Browsers only allow audio after a tap or key press, so every interaction (re)starts it.
+  ['pointerdown', 'keydown'].forEach(type => document.addEventListener(type, () => Sound.unlock(), true));
+
+  function syncSoundControls() {
+    const p = Sound.prefs();
+    $('#music-on').checked = p.music;
+    $('#sfx-on').checked = p.sfx;
+    $('#music-vol').value = Math.round(p.musicVol * 100);
+    $('#sfx-vol').value = Math.round(p.sfxVol * 100);
+    $('#music-vol').disabled = !p.music;
+    $('#sfx-vol').disabled = !p.sfx;
+    const room = S.view === 'home' ? null : Rooms.ROOMS[S.settings.room];
+    $('#now-playing').textContent = room
+      ? `Now playing: ${Sound.title(S.settings.room)} (${room.name})`
+      : 'Each room has its own jazz band. Music starts when you join a room.';
+  }
+
+  function openSound() {
+    syncSoundControls();
+    $('#sound-dialog').hidden = false;
+    $('#sound-done').focus();
+  }
+  function closeSound() {
+    $('#sound-dialog').hidden = true;
+  }
+
+  document.addEventListener('click', e => {
+    if (e.target.closest('[data-open-sound]')) openSound();
+  });
+  $('#sound-done').addEventListener('click', closeSound);
+  $('#sound-dialog').addEventListener('click', e => { if (e.target.id === 'sound-dialog') closeSound(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sound-dialog').hidden) closeSound(); });
+
+  $('#music-on').addEventListener('change', e => { Sound.set({ music: e.target.checked }); syncSoundControls(); });
+  $('#sfx-on').addEventListener('change', e => {
+    Sound.set({ sfx: e.target.checked });
+    syncSoundControls();
+    Sound.effect('click');
+  });
+  $('#music-vol').addEventListener('input', e => Sound.set({ musicVol: e.target.value / 100 }));
+  $('#sfx-vol').addEventListener('input', e => Sound.set({ sfxVol: e.target.value / 100 }));
+  $('#sfx-vol').addEventListener('change', () => Sound.effect('play', 2));
 
   // ---------- Installing as an app (PWA) ----------
 
