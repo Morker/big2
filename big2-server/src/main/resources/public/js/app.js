@@ -574,7 +574,8 @@
     const rows = [0, 1, 2, 3].sort((a, b) => S.scores[a] - S.scores[b]);
     const showTotals = S.settings.mode !== 'single';
     const table = `<table><thead><tr><th>Player</th><th class="num">This deal</th>${showTotals ? '<th class="num">Total</th>' : ''}</tr></thead><tbody>` +
-      rows.map(seat => `<tr class="${(S.overlay === 'match' ? seat === S.matchWinner : seat === S.dealWinner) ? 'win' : ''}"><td>${esc(who(seat))}${leftoverCards(seat)}</td><td class="num">${S.penalties[seat] ? '+' + S.penalties[seat] : '0'}</td>${showTotals ? `<td class="num">${S.scores[seat]}</td>` : ''}</tr>`).join('') +
+      rows.map(seat => `<tr class="${(S.overlay === 'match' ? seat === S.matchWinner : seat === S.dealWinner) ? 'win' : ''}${S.reveal[seat] && S.reveal[seat].length ? ' has-cards' : ''}"><td>${esc(who(seat))}${seat === S.dealWinner ? '<small class="went-out">Went out</small>' : ''}</td><td class="num">${S.penalties[seat] ? '+' + S.penalties[seat] : '0'}</td>${showTotals ? `<td class="num">${S.scores[seat]}</td>` : ''}</tr>` +
+        leftoverCards(seat, showTotals ? 3 : 2)).join('') +
       '</tbody></table>';
 
     if (S.overlay === 'deal') {
@@ -596,10 +597,17 @@
   }
 
   /** The cards a player was left holding when the deal ended. */
-  function leftoverCards(seat) {
+  /** A small card tile with a big rank and suit, easy to read on a phone. */
+  function tile(code) {
+    const [r, s] = Cards.parse(code);
+    const red = s === 'D' || s === 'H';
+    return `<span class="tile${red ? ' red' : ''}" aria-label="${Cards.pretty(code)}"><b>${r}</b><i>${Cards.pretty(code).slice(r.length)}</i></span>`;
+  }
+
+  function leftoverCards(seat, cols) {
     const cards = S.reveal[seat] || [];
-    if (!cards.length) return seat === S.dealWinner ? '<div class="left-cards out">Went out</div>' : '';
-    return `<div class="left-cards" aria-label="${cards.length} cards left">${cards.map(c => Cards.card(S.settings.deck, c)).join('')}</div>`;
+    if (!cards.length) return '';
+    return `<tr class="left-row"><td colspan="${cols}"><div class="left-cards" aria-label="${cards.length} cards left">${cards.map(tile).join('')}</div></td></tr>`;
   }
 
   let lastTickSecond = 0;
