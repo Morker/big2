@@ -139,6 +139,8 @@
       name: 'Tea House', deck: 'teahouse', accent: '#E7C27D', edge: '#1A0F09',
       blurb: 'Hong Kong back room. Square rosewood table, jade baize, tea at every corner.',
       pos: { left: [196, 320], right: [1000, 320], top: [570, 70], backsTop: [790, 70], backsLeft: [214, 440], backsRight: [1018, 440] },
+      // Seals have the name to their right, so shift seats left to keep names on screen.
+      portraitPos: { left: [90, 180], top: [340, 180], right: [590, 180], me: [60, 1372] },
       floor(k) {
         return `<defs><pattern id="pl${k}" width="300" height="38" patternUnits="userSpaceOnUse"><rect width="300" height="38" fill="#2B1A11"/><path d="M0 37H300M190 0V38" stroke="#170D08" stroke-width="2"/><path d="M20 12C90 8 150 16 260 11" stroke="#3A2418" fill="none"/></pattern><radialGradient id="ln${k}"><stop offset="0" stop-color="#E0402F" stop-opacity=".32"/><stop offset="1" stop-color="#E0402F" stop-opacity="0"/></radialGradient><pattern id="fr${k}" width="22" height="22" patternUnits="userSpaceOnUse"><rect width="22" height="22" fill="#3B1F14"/><path d="M3 3H19V19H8V8H14V14" fill="none" stroke="#7A4A2E" stroke-width="1.6"/></pattern></defs>
           <rect width="1200" height="760" fill="url(#pl${k})"/>
@@ -214,75 +216,205 @@
     }
   };
 
-  const DEFAULT_POS = { top: [600, 74], left: [100, 320], right: [1100, 320], me: [110, 668], backsTop: [790, 74], backsLeft: [100, 440], backsRight: [1100, 440] };
-  const PLATE_KEYS = ['me', 'left', 'top', 'right'];
-  const BACK_KEYS = [null, 'backsLeft', 'backsTop', 'backsRight'];
+  // ---------- Layouts ----------
+  // Landscape draws the room as designed (1200 x 760). Portrait (phones held upright) turns the
+  // floor and table a quarter turn into a 760 x 1450 canvas, puts the three opponents across the
+  // top, and gives the hand the full width of the screen.
+  const LAYOUTS = {
+    landscape: {
+      w: 1200, h: 760,
+      plates: { me: [110, 668], left: [100, 320], top: [600, 74], right: [1100, 320] },
+      backs: { left: [100, 440], top: [790, 74], right: [1100, 440] },
+      bubbles: { me: [110, 598], left: [100, 252], top: [600, 172], right: [1100, 252] },
+      center: [600, 352], tableW: 96, tableGap: 66, labelY: 262, statusY: 486,
+      hand: { cx: 600, y: 640, w: 104, gap: 52, arc: 0.6, rot: 2 },
+      buttons: { play: [1075, 640], pass: [1075, 700] }, backW: 40
+    },
+    portrait: {
+      w: 760, h: 1450, turn: 100,
+      plates: { me: [100, 1372], left: [130, 180], top: [380, 180], right: [630, 180] },
+      backs: { left: [130, 268], top: [380, 268], right: [630, 268] },
+      bubbles: { me: [100, 1300], left: [130, 330], top: [380, 330], right: [630, 330] },
+      center: [400, 700], tableW: 116, tableGap: 64, labelY: 576, statusY: 842,
+      hand: { cx: 380, y: 1216, w: 112, gap: 49, arc: 0.5, rot: 1.6 },
+      buttons: { play: [400, 1372], pass: [590, 1372] }, backW: 36
+    }
+  };
+  const REL_KEYS = ['me', 'left', 'top', 'right'];
 
-  function positions(rm) {
-    return Object.assign({}, DEFAULT_POS, rm.pos || {});
+  /** Plate, card-back and bubble points for one room in one orientation. */
+  function points(rm, orient) {
+    const G = LAYOUTS[orient];
+    const plates = Object.assign({}, G.plates);
+    const backs = Object.assign({}, G.backs);
+    const overrides = orient === 'portrait' ? rm.portraitPos : rm.pos;
+    if (overrides) {
+      for (const k of REL_KEYS) if (overrides[k]) plates[k] = overrides[k];
+      if (overrides.backsLeft) backs.left = overrides.backsLeft;
+      if (overrides.backsTop) backs.top = overrides.backsTop;
+      if (overrides.backsRight) backs.right = overrides.backsRight;
+    }
+    return { G, plates, backs, bubbles: G.bubbles };
+  }
+
+  function handSlot(G, i, n) {
+    const d = i - (n - 1) / 2;
+    return { x: G.hand.cx + d * G.hand.gap, y: G.hand.y + d * d * G.hand.arc, rot: d * G.hand.rot };
+  }
+
+  const TILTS = [-5, 6, -3, 4, -2];
+  function tableSlot(G, i, n) {
+    return { x: G.center[0] + (i - (n - 1) / 2) * G.tableGap, y: G.center[1] + (i % 2) * 4, rot: TILTS[i % 5] };
   }
 
   function defs(k) {
     return `<defs><filter id="ds${k}" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity=".5"/></filter><filter id="bl${k}" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="14"/></filter></defs>`;
   }
 
+  // ---------- Animation helpers ----------
+  // Cards are re-drawn on every state change, so an animation is described by when it started:
+  // a negative delay lets a freshly drawn card pick up exactly where the previous one was.
+
+  /** Inline style that moves an element between `from` and its slot ('b2-in' arrives, 'b2-out' leaves). */
+  function motion(slot, from, name, durMs, delayMs) {
+    const dx = from.x - slot.x, dy = from.y - slot.y;
+    const a = slot.rot * Math.PI / 180;
+    // The card's group is rotated, so express the offset in its own rotated frame.
+    const lx = dx * Math.cos(a) + dy * Math.sin(a);
+    const ly = -dx * Math.sin(a) + dy * Math.cos(a);
+    const s = from.s == null ? 1 : from.s, op = from.o == null ? 1 : from.o;
+    return ` style="--dx:${lx.toFixed(1)}px;--dy:${ly.toFixed(1)}px;--r:${((from.rot || 0) - slot.rot).toFixed(1)}deg;--s:${s};--o:${op};animation:${name} ${durMs}ms cubic-bezier(.2,.75,.25,1) ${Math.round(delayMs)}ms both"`;
+  }
+
+  const DEAL_STAGGER = 60, DEAL_DUR = 380, PLAY_DUR = 380, SHIFT_DUR = 260, SWEEP_DUR = 460, PASS_DUR = 1400;
+
+  /** How long each animation lasts, so the app knows when to forget it. */
+  const DURATIONS = { deal: 13 * DEAL_STAGGER + DEAL_DUR, play: PLAY_DUR + 200, shift: SHIFT_DUR, sweep: SWEEP_DUR, pass: PASS_DUR };
+
+  function cardGroup(slot, w, deck, code, ds, style) {
+    return `<g transform="translate(${slot.x.toFixed(1)} ${slot.y.toFixed(1)}) rotate(${slot.rot.toFixed(2)})" filter="url(#${ds})"><g class="fly"${style || ''}>${nest(Cards.card(deck, code), w)}</g></g>`;
+  }
+
   /**
    * view = {
    *   deck, players: [4, by position: 0 you, 1 left, 2 top, 3 right] of { seat, name, count, active },
-   *   tableCards: ['7H', ...], label, status, hand: [{ code, selected }], canPlay, canPass
+   *   tableCards, label, status, hand: [{ code, selected }], canPlay, canPass,
+   *   anim: { deal: { elapsed }, play: { elapsed, rel, prevHand }, shift: { elapsed, prevHand },
+   *           sweep: { elapsed, cards, rel }, passes: [{ rel, elapsed }] }   (each optional)
    * }
    */
-  function scene(roomId, view) {
+  function scene(roomId, view, orient) {
+    orient = LAYOUTS[orient] ? orient : 'landscape';
     const rm = ROOMS[roomId] || ROOMS['gold-room'];
-    const k = uid++, ds = 'ds' + k, p = positions(rm), deck = view.deck;
+    const { G, plates, backs, bubbles } = points(rm, orient);
+    const k = uid++, ds = 'ds' + k, deck = view.deck, anim = view.anim || {};
     const winds = ['東', '南', '西', '北'];
-    let o = `<svg class="scene" viewBox="0 0 1200 760" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(rm.name)} table" xmlns="http://www.w3.org/2000/svg">`;
-    o += defs(k) + rm.floor(k) + rm.table(k);
+    const backAt = rel => {
+      const [x, y] = backs[REL_KEYS[rel]] || plates[REL_KEYS[rel]];
+      return { x, y };
+    };
 
-    if (view.label) o += rm.tableText(600, 274, view.label);
-    const n = view.tableCards.length, tilts = [-5, 6, -3, 4, -2];
+    let o = `<svg class="scene ${orient}" viewBox="0 0 ${G.w} ${G.h}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(rm.name)} table" xmlns="http://www.w3.org/2000/svg">`;
+    o += defs(k);
+    if (orient === 'portrait') {
+      o += `<rect width="${G.w}" height="${G.h}" fill="${rm.edge}"/><g transform="translate(${G.w} ${G.turn}) rotate(90)">${rm.floor(k)}${rm.table(k)}</g>`;
+    } else {
+      o += rm.floor(k) + rm.table(k);
+    }
+
+    if (view.label) o += rm.tableText(G.center[0], G.labelY, view.label);
+
+    // Cards leaving the table toward whoever won the trick.
+    if (anim.sweep) {
+      const n = anim.sweep.cards.length;
+      const [wx, wy] = plates[REL_KEYS[anim.sweep.rel]];
+      anim.sweep.cards.forEach((code, i) => {
+        const slot = tableSlot(G, i, n);
+        const style = motion(slot, { x: wx, y: wy, rot: slot.rot, s: 0.35, o: 0 }, 'b2-out', SWEEP_DUR, -anim.sweep.elapsed);
+        o += cardGroup(slot, G.tableW, deck, code, ds, style);
+      });
+    }
+
+    // Cards on the table, flying in from whoever just played them.
+    const n = view.tableCards.length;
     view.tableCards.forEach((code, i) => {
-      o += place(Cards.card(deck, code), 600 + (i - (n - 1) / 2) * 58, 352 + (i % 2) * 4, 80, tilts[i % 5], ds);
+      const slot = tableSlot(G, i, n);
+      let style = '';
+      if (anim.play) {
+        const prev = anim.play.prevHand || [];
+        let from;
+        if (anim.play.rel === 0 && prev.includes(code)) {
+          const s = handSlot(G, prev.indexOf(code), prev.length);
+          from = { x: s.x, y: s.y, rot: s.rot, s: G.hand.w / G.tableW, o: 1 };
+        } else {
+          const b = backAt(anim.play.rel);
+          from = { x: b.x, y: b.y, rot: 0, s: G.backW / G.tableW, o: 0.4 };
+        }
+        style = motion(slot, from, 'b2-in', PLAY_DUR, i * 40 - anim.play.elapsed);
+      }
+      o += cardGroup(slot, G.tableW, deck, code, ds, style);
     });
-    if (view.status) o += rm.status(600, 474, view.status);
+    if (view.status) o += rm.status(G.center[0], G.statusY, view.status);
 
+    // Seats, each with a small fan of face-down cards.
     view.players.forEach((pl, rel) => {
       if (rel > 0 && pl.count > 0) {
-        const [bx, by] = p[BACK_KEYS[rel]];
+        const b = backAt(rel);
         const shown = Math.min(pl.count, 4);
         for (let i = 0; i < shown; i++) {
           const off = i - (shown - 1) / 2;
-          o += place(Cards.back(deck), bx + off * 13, by, 40, off * 9, ds);
+          const slot = { x: b.x + off * 13, y: b.y, rot: off * 9 };
+          const style = anim.deal
+            ? motion(slot, { x: G.center[0], y: G.center[1], rot: 0, s: 0.8, o: 0 }, 'b2-in', DEAL_DUR, (i * 3 + rel) * DEAL_STAGGER - anim.deal.elapsed)
+            : '';
+          o += `<g transform="translate(${slot.x} ${slot.y}) rotate(${slot.rot})" filter="url(#${ds})"><g class="fly"${style}>${nest(Cards.back(deck), G.backW)}</g></g>`;
         }
       }
-      const [x, y] = p[PLATE_KEYS[rel]];
+      const [x, y] = plates[REL_KEYS[rel]];
       o += rm.plate(x, y, pl.name, rel === 0 ? null : pl.count, pl.active, winds[pl.seat], pl.seat + 1);
     });
 
-    const h = view.hand.length;
-    view.hand.forEach((c, i) => {
-      const d = i - (h - 1) / 2;
-      const x = 600 + d * 44, y = 652 + d * d * 0.7;
-      o += `<g class="hc" data-card="${c.code}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${(d * 2.2).toFixed(2)})" filter="url(#${ds})">` +
-        `<g class="lift${c.selected ? ' sel' : ''}">` +
-        (c.selected ? `<rect x="-44" y="-59.6" width="88" height="119.2" rx="11" fill="none" stroke="${rm.accent}" stroke-width="4"/>` : '') +
-        nest(Cards.card(deck, c.code), 78) + '</g></g>';
+    // "Pass" bubbles.
+    (anim.passes || []).forEach(p => {
+      const [bx, by] = bubbles[REL_KEYS[p.rel]];
+      o += `<g transform="translate(${bx} ${by})"><g class="pass-bubble" style="animation:b2-pass ${PASS_DUR}ms ease-out ${-Math.round(p.elapsed)}ms both">` +
+        `<rect x="-38" y="-17" width="76" height="34" rx="17" fill="#0B0D0C" fill-opacity=".86" stroke="${rm.accent}" stroke-width="1.5"/>` +
+        `<text y="6" text-anchor="middle" font-family="${F.sans}" font-size="16" font-weight="700" fill="${rm.accent}">Pass</text></g></g>`;
     });
 
-    o += `<g class="sbtn${view.canPlay ? '' : ' off'}" data-action="play">${rm.button(1075, 640, 'Play', true)}</g>`;
-    o += `<g class="sbtn${view.canPass ? '' : ' off'}" data-action="pass">${rm.button(1075, 700, 'Pass', false)}</g>`;
+    // Your hand: dealt in from the table, or sliding together after you play.
+    const h = view.hand.length, w = G.hand.w, ch = w * 1.4;
+    const prevShift = anim.shift ? anim.shift.prevHand : null;
+    view.hand.forEach((c, i) => {
+      const slot = handSlot(G, i, h);
+      let style = '';
+      if (anim.deal) {
+        style = motion(slot, { x: G.center[0], y: G.center[1], rot: 0, s: 0.7, o: 0 }, 'b2-in', DEAL_DUR, i * DEAL_STAGGER - anim.deal.elapsed);
+      } else if (prevShift && prevShift.includes(c.code)) {
+        const from = handSlot(G, prevShift.indexOf(c.code), prevShift.length);
+        if (Math.abs(from.x - slot.x) > 0.5) style = motion(slot, from, 'b2-in', SHIFT_DUR, -anim.shift.elapsed);
+      }
+      o += `<g class="hc" data-card="${c.code}" transform="translate(${slot.x.toFixed(1)} ${slot.y.toFixed(1)}) rotate(${slot.rot.toFixed(2)})" filter="url(#${ds})">` +
+        `<g class="fly"${style}><g class="lift${c.selected ? ' sel' : ''}">` +
+        (c.selected ? `<rect x="${-w / 2 - 5}" y="${-ch / 2 - 5}" width="${w + 10}" height="${ch + 10}" rx="12" fill="none" stroke="${rm.accent}" stroke-width="4"/>` : '') +
+        nest(Cards.card(deck, c.code), w) + '</g></g></g>';
+    });
+
+    const [px, py] = G.buttons.play, [qx, qy] = G.buttons.pass;
+    o += `<g class="sbtn${view.canPlay ? '' : ' off'}" data-action="play">${rm.button(px, py, 'Play', true)}</g>`;
+    o += `<g class="sbtn${view.canPass ? '' : ' off'}" data-action="pass">${rm.button(qx, qy, 'Pass', false)}</g>`;
     o += '<g id="timer-layer"></g>';
     return o + '</svg>';
   }
 
   /** A slim countdown bar above a seat's plate, drawn into #timer-layer. */
-  function timerBar(roomId, rel, fraction, seconds) {
+  function timerBar(roomId, rel, fraction, seconds, orient) {
     const rm = ROOMS[roomId] || ROOMS['gold-room'];
-    const [x, y] = positions(rm)[PLATE_KEYS[rel]];
-    const left = rm.pos && roomId === 'tea-house' ? x - 34 : x - 75;
+    const { plates } = points(rm, LAYOUTS[orient] ? orient : 'landscape');
+    const [x, y] = plates[REL_KEYS[rel]];
+    const left = roomId === 'tea-house' ? x - 34 : x - 75;
     const w = 150, top = y - 60;
-    const urgent = seconds <= 5;
-    const color = urgent ? '#FF6B6B' : rm.accent;
+    const color = seconds <= 5 ? '#FF6B6B' : rm.accent;
     return `<rect x="${left}" y="${top}" width="${w}" height="5" rx="2.5" fill="#000" fill-opacity=".55"/>` +
       `<rect x="${left}" y="${top}" width="${(w * Math.max(0, Math.min(1, fraction))).toFixed(1)}" height="5" rx="2.5" fill="${color}"/>` +
       `<text x="${left + w + 8}" y="${top + 6}" font-family="${F.mono}" font-size="13" font-weight="700" fill="${color}">${seconds}s</text>`;
@@ -297,5 +429,5 @@
       place(Cards.card(deck, 'AS'), 560, 360, 90, -6) + place(Cards.card(deck, 'KH'), 640, 362, 90, 6) + '</svg>';
   }
 
-  window.Rooms = { ROOMS, scene, timerBar, preview };
+  window.Rooms = { ROOMS, scene, timerBar, preview, DURATIONS };
 })();

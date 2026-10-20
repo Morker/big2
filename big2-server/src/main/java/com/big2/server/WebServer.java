@@ -22,11 +22,12 @@ public final class WebServer {
     public static Javalin start(String host, int port, RoomManager rooms, String staticDir) {
         Javalin app = Javalin.create(config -> {
             config.showJavalinBanner = false;
-            if (staticDir == null) {
-                config.staticFiles.add("/public", Location.CLASSPATH);
-            } else {
-                config.staticFiles.add(staticDir, Location.EXTERNAL);
-            }
+            config.staticFiles.add(files -> {
+                files.directory = staticDir == null ? "/public" : staticDir;
+                files.location = staticDir == null ? Location.CLASSPATH : Location.EXTERNAL;
+                // Browsers must check for a newer version on every visit, so updates show up immediately.
+                files.headers = java.util.Map.of("Cache-Control", "no-cache");
+            });
         });
 
         app.get("/health", ctx -> ctx.result("ok"));

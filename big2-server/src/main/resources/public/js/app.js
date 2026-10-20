@@ -20,6 +20,32 @@
     leaveArmed: false
   };
 
+  // ---------- Animations ----------
+  // Each entry remembers when it started; rooms.js turns that into CSS animations that survive re-renders.
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let A = { deal: null, play: null, shift: null, sweep: null, passes: [] };
+  const relOf = seat => (seat - S.mySeat + 4) % 4;
+  const orientation = () => (window.innerHeight > window.innerWidth ? 'portrait' : 'landscape');
+
+  function animate(kind, data) {
+    if (reduceMotion) return;
+    const entry = Object.assign({ start: performance.now() }, data);
+    if (kind === 'pass') A.passes.push(entry); else A[kind] = entry;
+  }
+
+  /** The animations still running, with how far along each one is. */
+  function liveAnimations() {
+    const now = performance.now(), D = Rooms.DURATIONS, out = {};
+    for (const kind of ['deal', 'play', 'shift', 'sweep']) {
+      const a = A[kind];
+      if (a && now - a.start < D[kind]) out[kind] = Object.assign({}, a, { elapsed: now - a.start });
+      else A[kind] = null;
+    }
+    A.passes = A.passes.filter(p => now - p.start < D.pass);
+    out.passes = A.passes.map(p => ({ rel: p.rel, elapsed: now - p.start }));
+    return out;
+  }
+
   // ---------- Connection ----------
 
   let ws = null;
@@ -90,11 +116,18 @@
         S.table = []; S.tableOwner = -1; S.playsThisDeal = 0;
         S.lastAction = ''; S.lastPass = ''; S.selected.clear(); S.dealWinner = -1;
         if (S.deal === 1) { S.scores = [0, 0, 0, 0]; S.matchWinner = -1; }
+        A = { deal: null, play: null, shift: null, sweep: null, passes: [] };
+        animate('deal');
         break;
-      case 'HAND':
+      case 'HAND': {
+        const before = S.hand;
         S.hand = rest.trim() ? rest.trim().split(/\s+/).sort((a, b) => Cards.strength(a) - Cards.strength(b)) : [];
+        if (S.hand.length < before.length && S.hand.every(c => before.includes(c))) {
+          animate('shift', { prevHand: before });
+        }
         for (const c of [...S.selected]) if (!S.hand.includes(c)) S.selected.delete(c);
         break;
+      }
       case 'COUNTS':
         S.counts = nums();
         break;
@@ -106,6 +139,7 @@
         S.turnSeconds = Number(secs || 0);
         S.turnDeadline = S.turnSeconds > 0 ? Date.now() + S.turnSeconds * 1000 : 0;
         if (S.leading && S.table.length) {
+          animate('sweep', { cards: [...S.table], rel: relOf(prevOwner) });
           S.lastAction = `${who(prevOwner)} won the trick`;
           S.table = []; S.tableOwner = -1; S.lastPass = '';
         }
@@ -114,6 +148,7 @@
       case 'PLAYED': {
         const parts = rest.split(/\s+/);
         const seat = Number(parts[0]);
+        animate('play', { rel: relOf(seat), prevHand: seat === S.mySeat ? [...S.hand] : null });
         S.table = parts.slice(1);
         S.tableOwner = seat;
         S.playsThisDeal++;
@@ -124,6 +159,7 @@
       }
       case 'PASSED':
         S.lastPass = `${who(Number(rest))} passed`;
+        animate('pass', { rel: relOf(Number(rest)) });
         break;
       case 'TIMEOUT': {
         const seat = Number(rest);
@@ -307,12 +343,13 @@
       deck: S.settings.deck, players, tableCards: S.table, label, status,
       hand: S.hand.map(code => ({ code, selected: S.selected.has(code) })),
       canPlay: myTurn && S.selected.size > 0,
-      canPass: myTurn && !S.leading
+      canPass: myTurn && !S.leading,
+      anim: liveAnimations()
     };
   }
 
   function renderTable() {
-    $('#stage').innerHTML = Rooms.scene(S.settings.room, tableView());
+    $('#stage').innerHTML = Rooms.scene(S.settings.room, tableView(), orientation());
     $('#stage').style.background = Rooms.ROOMS[S.settings.room].edge;
     renderHud();
     renderOverlay();
@@ -366,7 +403,7 @@
       if (S.turnDeadline && S.phase === 'playing' && S.turn >= 0) {
         const left = Math.max(0, S.turnDeadline - Date.now());
         const rel = (S.turn - S.mySeat + 4) % 4;
-        layer.innerHTML = Rooms.timerBar(S.settings.room, rel, left / (S.turnSeconds * 1000), Math.ceil(left / 1000));
+        layer.innerHTML = Rooms.timerBar(S.settings.room, rel, left / (S.turnSeconds * 1000), Math.ceil(left / 1000), orientation());
       } else {
         layer.innerHTML = '';
       }
@@ -478,6 +515,18 @@
       S.view = S.phase === 'playing' ? 'table' : 'lobby';
       render();
     }
+  });
+
+  // Re-draw the table when the phone turns or the window changes shape.
+  let lastOrientation = orientation(), resizeTimer = 0;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (orientation() !== lastOrientation) {
+        lastOrientation = orientation();
+        if (S.view === 'table') renderTable();
+      }
+    }, 120);
   });
 
   document.addEventListener('keydown', e => {

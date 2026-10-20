@@ -114,6 +114,19 @@ input[type="number"] { width: 90px; }
 .hc .lift { transition: transform .12s ease; }
 .hc:hover .lift { transform: translateY(-10px); }
 .hc .lift.sel { transform: translateY(-30px); }
+/* Card motion. Offsets come from inline custom properties set by rooms.js. */
+@keyframes b2-in {
+  from { transform: translate(var(--dx), var(--dy)) rotate(var(--r)) scale(var(--s)); opacity: var(--o); }
+}
+@keyframes b2-out {
+  to { transform: translate(var(--dx), var(--dy)) rotate(var(--r)) scale(var(--s)); opacity: 0; }
+}
+@keyframes b2-pass {
+  0% { opacity: 0; transform: translateY(10px) scale(.85); }
+  14% { opacity: 1; transform: none; }
+  78% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-12px); }
+}
 .sbtn { cursor: pointer; }
 .sbtn:hover { filter: brightness(1.12); }
 .sbtn.off { opacity: .32; pointer-events: none; }
@@ -138,8 +151,16 @@ input[type="number"] { width: 90px; }
 .result tr.win td { color: var(--accent); font-weight: 600; }
 .result .foot { margin-top: 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 
-#rotate-hint { display: none; position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); font-size: 12px; background: rgba(0,0,0,.7); padding: 6px 12px; border-radius: 999px; white-space: nowrap; }
-@media (orientation: portrait) and (max-width: 700px) { #rotate-hint { display: block; } }
+/* Phones held upright: one compact row across the top, scores as a 2-row strip. */
+@media (orientation: portrait) {
+  #hud { left: 8px; right: 8px; top: max(6px, env(safe-area-inset-top)); }
+  .hud-right { flex-direction: row; align-items: flex-start; }
+  .chip { padding: 5px 9px; font-size: 12px; }
+  .chip .code { font-size: 13px; }
+  .scoreboard { grid-auto-flow: column; grid-template-rows: auto auto; grid-template-columns: none; gap: 0 10px; text-align: center; }
+  .result { padding: 18px 16px; }
+  .result h2 { font-size: 24px; }
+}
 
 #toasts { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; z-index: 10; pointer-events: none; width: min(92vw, 520px); }
 .toast { background: rgba(10,13,12,.94); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; font-size: 14px; text-align: center; animation: toast-in .18s ease-out; }
