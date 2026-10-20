@@ -67,6 +67,7 @@ public final class PlayerSession {
                     requireRoom().play(this, cards);
                 }
                 case Protocol.PASS -> requireRoom().pass(this);
+                case Protocol.REACT -> requireRoom().react(this, rest.trim());
                 case Protocol.QUIT -> {
                     return false;
                 }

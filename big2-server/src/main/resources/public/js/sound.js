@@ -516,7 +516,13 @@
       [72, 76, 79, 84, 88].forEach((m, i) => bell(t + i * 0.09, m, 0.11, 1.4));
       [72, 76, 79, 83].forEach(m => bell(t + 0.55, m, 0.06, 2));
     },
-    click(t) { tone(t, 'sine', 1200, 0.05, 0.02); }
+    click(t) { tone(t, 'sine', 1200, 0.05, 0.02); },
+    pop(t) {
+      const g = gain(0), end = shape(g, t, 0.003, 0.14, 0.0001, 0.005, 0.12);
+      const o = osc('sine', 420, t, end);
+      o.frequency.exponentialRampToValueAtTime(880, t + 0.07);
+      o.connect(g); g.connect(sfxBus);
+    }
   };
 
   // ---------- Public API ----------

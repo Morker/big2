@@ -15,6 +15,7 @@ package com.big2.server.protocol;
  * START                   owner only: start the match; empty seats are filled with bots
  * PLAY &lt;card&gt; [card...]   play cards, e.g. PLAY 3D 3S
  * PASS                    pass
+ * REACT &lt;id&gt;              send a reaction: like, lol, wow, cool, cry, angry, fire, clap, gg
  * PING                    keep-alive, ignored
  * QUIT                    leave
  * </pre>
@@ -33,6 +34,7 @@ package com.big2.server.protocol;
  * TURN &lt;seat&gt; &lt;LEAD|FOLLOW&gt; &lt;s&gt;   whose turn; s = seconds on their timer, 0 = none
  * PLAYED &lt;seat&gt; &lt;card&gt; [card...]
  * PASSED &lt;seat&gt;
+ * REACT &lt;seat&gt; &lt;id&gt;            someone sent a reaction
  * TIMEOUT &lt;seat&gt;                   their timer ran out; the move that follows was automatic
  * WIN &lt;seat&gt; &lt;name&gt;                won the deal
  * SCORES &lt;p0..p3&gt; &lt;t0..t3&gt;        this deal's penalties, then match totals
@@ -55,6 +57,7 @@ public final class Protocol {
     public static final String START = "START";
     public static final String PLAY = "PLAY";
     public static final String PASS = "PASS";
+    public static final String REACT = "REACT";
     public static final String PING = "PING";
     public static final String QUIT = "QUIT";
 

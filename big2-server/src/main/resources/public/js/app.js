@@ -31,26 +31,30 @@
   // ---------- Animations ----------
   // Each entry remembers when it started; rooms.js turns that into CSS animations that survive re-renders.
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let A = { deal: null, play: null, shift: null, sweep: null, passes: [] };
+  let A = { deal: null, play: null, shift: null, sweep: null, shake: null, passes: [], reactions: [] };
   const relOf = seat => (seat - S.mySeat + 4) % 4;
   const orientation = () => (window.innerHeight > window.innerWidth ? 'portrait' : 'landscape');
 
   function animate(kind, data) {
     if (reduceMotion) return;
     const entry = Object.assign({ start: performance.now() }, data);
-    if (kind === 'pass') A.passes.push(entry); else A[kind] = entry;
+    if (kind === 'pass') A.passes.push(entry);
+    else if (kind === 'react') A.reactions.push(entry);
+    else A[kind] = entry;
   }
 
   /** The animations still running, with how far along each one is. */
   function liveAnimations() {
     const now = performance.now(), D = Rooms.DURATIONS, out = {};
-    for (const kind of ['deal', 'play', 'shift', 'sweep']) {
+    for (const kind of ['deal', 'play', 'shift', 'sweep', 'shake']) {
       const a = A[kind];
       if (a && now - a.start < D[kind]) out[kind] = Object.assign({}, a, { elapsed: now - a.start });
       else A[kind] = null;
     }
     A.passes = A.passes.filter(p => now - p.start < D.pass);
     out.passes = A.passes.map(p => ({ rel: p.rel, elapsed: now - p.start }));
+    A.reactions = A.reactions.filter(r => now - r.start < D.react);
+    out.reactions = A.reactions.map(r => ({ rel: r.rel, id: r.id, elapsed: now - r.start }));
     return out;
   }
 
@@ -126,8 +130,9 @@
         S.table = []; S.tableOwner = -1; S.playsThisDeal = 0;
         S.lastAction = ''; S.lastPass = ''; S.selected.clear(); S.dealWinner = -1; S.revealUntil = 0;
         if (S.deal === 1) { S.scores = [0, 0, 0, 0]; S.matchWinner = -1; }
-        A = { deal: null, play: null, shift: null, sweep: null, passes: [] };
+        A = { deal: null, play: null, shift: null, sweep: null, shake: null, passes: [], reactions: [] };
         animate('deal');
+        S.quick = null;
         Sound.effect('deal');
         break;
       case 'HAND': {
@@ -163,12 +168,19 @@
         const seat = Number(parts[0]);
         animate('play', { rel: relOf(seat), prevHand: seat === S.mySeat ? [...S.hand] : null });
         Sound.effect('play', parts.length - 1);
+        S.quick = null;
         S.table = parts.slice(1);
         S.tableOwner = seat;
         S.playsThisDeal++;
         S.lastPass = '';
         S.lastAction = `${who(seat)} played ${describe(S.table)}`;
         if (seat === S.mySeat) S.selected.clear();
+        break;
+      }
+      case 'REACT': {
+        const [seat, id] = rest.split(/\s+/);
+        animate('react', { rel: relOf(Number(seat)), id });
+        Sound.effect('pop');
         break;
       }
       case 'PASSED':
@@ -365,12 +377,41 @@
     if (!label && playing && S.leading && !myTurn) label = 'Table is clear';
 
     return {
-      deck: S.settings.deck, players, tableCards: S.table, label, status,
+      deck: S.settings.deck, players, tableCards: S.table, label, status, chips: quickChips(),
       hand: S.hand.map(code => ({ code, selected: S.selected.has(code) })),
       canPlay: myTurn && S.selected.size > 0,
       canPass: myTurn && !S.leading,
       anim: liveAnimations()
     };
+  }
+
+  const rulesNow = () => ({ twos: S.settings.twos, wrap: S.settings.wrap });
+  const tableToBeat = () => (S.leading ? null : S.table);
+
+  /** Combinations available right now, by type, weakest first. */
+  function quickOptions() {
+    return Combos.options(S.hand, tableToBeat(), rulesNow(), mustIncludeThreeOfDiamonds());
+  }
+
+  /** Chips for the combos you can make; singles only when the table holds a single. */
+  function quickChips() {
+    if (S.phase !== 'playing' || !S.hand.length) return [];
+    const opts = quickOptions();
+    const table = tableToBeat();
+    return Combos.TYPES
+      .filter(t => opts[t] && opts[t].length && (t !== 'single' || (table && table.length === 1)))
+      .map(t => ({ type: t, label: Combos.LABELS[t], count: opts[t].length, active: !!(S.quick && S.quick.type === t) }));
+  }
+
+  /** Selects the smallest combo of a type; tapping the same chip again steps to the next one up. */
+  function quickSelect(type) {
+    const list = quickOptions()[type] || [];
+    if (!list.length) return;
+    const index = S.quick && S.quick.type === type ? (S.quick.index + 1) % list.length : 0;
+    S.quick = { type, index };
+    S.selected = new Set(list[index].cards.map(c => c.code));
+    Sound.effect('select');
+    renderTable();
   }
 
   function renderTable() {
@@ -394,7 +435,7 @@
       `<span class="${seat === S.mySeat ? 'me' : ''}">${esc(who(seat))}</span><span class="${seat === S.mySeat ? 'me' : ''}">${S.scores[seat]}</span>`).join('')}</div>` : '';
     $('#hud').innerHTML =
       `<div class="hud-left"><div class="chip"><span class="code">${esc(S.room || '')}</span> &middot; ${modeLine()}</div></div>` +
-      `<div class="hud-right">${board}<div class="chip"><button type="button" class="btn ghost" data-open-sound aria-label="Sound settings">Sound</button><button type="button" class="btn ghost" id="leave-btn">${S.leaveArmed ? 'Leave game? A bot takes your seat' : 'Leave'}</button></div></div>`;
+      `<div class="hud-right">${board}<div class="chip"><button type="button" class="btn ghost react-btn" id="react-btn" aria-label="Send a reaction" aria-haspopup="true">😀</button><button type="button" class="btn ghost" data-open-sound aria-label="Sound settings">Sound</button><button type="button" class="btn ghost" id="leave-btn">${S.leaveArmed ? 'Leave game? A bot takes your seat' : 'Leave'}</button></div></div>`;
   }
 
   function revealing() {
@@ -525,6 +566,14 @@
 
   function playSelected() {
     if (!S.selected.size || S.turn !== S.mySeat || S.phase !== 'playing') return;
+    const why = Combos.problem([...S.selected], tableToBeat(), rulesNow(), mustIncludeThreeOfDiamonds());
+    if (why) {
+      animate('shake');
+      Sound.effect('error');
+      toast(why, true);
+      renderTable();
+      return;
+    }
     send('PLAY ' + [...S.selected].join(' '));
   }
 
@@ -534,8 +583,25 @@
       renderTable();
       return;
     }
+    const quick = e.target.closest('[data-quick]');
+    if (quick) {
+      quickSelect(quick.getAttribute('data-quick'));
+      return;
+    }
+    const reaction = e.target.closest('[data-react]');
+    if (reaction) {
+      send('REACT ' + reaction.getAttribute('data-react'));
+      $('#react-tray').hidden = true;
+      return;
+    }
+    if (e.target.closest('#react-btn')) {
+      $('#react-tray').hidden = !$('#react-tray').hidden;
+      return;
+    }
+    if (!$('#react-tray').hidden && !e.target.closest('#react-tray')) $('#react-tray').hidden = true;
     const card = e.target.closest('[data-card]');
     if (card) {
+      S.quick = null;
       const code = card.getAttribute('data-card');
       if (S.selected.has(code)) S.selected.delete(code); else S.selected.add(code);
       Sound.effect('select');

@@ -226,9 +226,11 @@
       plates: { me: [110, 668], left: [100, 320], top: [600, 74], right: [1100, 320] },
       backs: { left: [100, 440], top: [790, 74], right: [1100, 440] },
       bubbles: { me: [110, 598], left: [100, 252], top: [600, 172], right: [1100, 252] },
-      center: [600, 352], tableW: 96, tableGap: 66, labelY: 262, statusY: 486,
+      center: [600, 352], tableW: 96, tableGap: 66, labelY: 262, statusY: 468,
       hand: { cx: 600, y: 640, w: 104, gap: 52, arc: 0.6, rot: 2 },
-      buttons: { play: [1075, 640], pass: [1075, 700] }, backW: 40
+      buttons: { play: [1075, 640], pass: [1075, 700] }, backW: 40,
+      chipsY: 512, chipsW: 1100,
+      reacts: { me: [110, 588], left: [205, 296], top: [505, 70], right: [995, 296] }
     },
     portrait: {
       w: 760, h: 1450, turn: 100,
@@ -237,7 +239,9 @@
       bubbles: { me: [100, 1300], left: [130, 330], top: [380, 330], right: [630, 330] },
       center: [400, 700], tableW: 116, tableGap: 64, labelY: 576, statusY: 842,
       hand: { cx: 380, y: 1216, w: 112, gap: 49, arc: 0.5, rot: 1.6 },
-      buttons: { play: [400, 1372], pass: [590, 1372] }, backW: 36
+      buttons: { play: [400, 1372], pass: [590, 1372] }, backW: 36,
+      chipsY: 1082, chipsW: 720,
+      reacts: { me: [235, 1372], left: [205, 300], top: [455, 300], right: [705, 300] }
     }
   };
   const REL_KEYS = ['me', 'left', 'top', 'right'];
@@ -254,7 +258,7 @@
       if (overrides.backsTop) backs.top = overrides.backsTop;
       if (overrides.backsRight) backs.right = overrides.backsRight;
     }
-    return { G, plates, backs, bubbles: G.bubbles };
+    return { G, plates, backs, bubbles: G.bubbles, reacts: G.reacts };
   }
 
   function handSlot(G, i, n) {
@@ -289,7 +293,9 @@
   const DEAL_STAGGER = 60, DEAL_DUR = 380, PLAY_DUR = 380, SHIFT_DUR = 260, SWEEP_DUR = 460, PASS_DUR = 1400;
 
   /** How long each animation lasts, so the app knows when to forget it. */
-  const DURATIONS = { deal: 13 * DEAL_STAGGER + DEAL_DUR, play: PLAY_DUR + 200, shift: SHIFT_DUR, sweep: SWEEP_DUR, pass: PASS_DUR };
+  const REACT_DUR = 2400, SHAKE_DUR = 420;
+  const DURATIONS = { deal: 13 * DEAL_STAGGER + DEAL_DUR, play: PLAY_DUR + 200, shift: SHIFT_DUR, sweep: SWEEP_DUR, pass: PASS_DUR, react: REACT_DUR, shake: SHAKE_DUR };
+  const EMOJI = { like: '👍', lol: '😂', wow: '😮', cool: '😎', cry: '😭', angry: '😡', fire: '🔥', clap: '👏', gg: 'GG' };
 
   function cardGroup(slot, w, deck, code, ds, style) {
     return `<g transform="translate(${slot.x.toFixed(1)} ${slot.y.toFixed(1)}) rotate(${slot.rot.toFixed(2)})" filter="url(#${ds})"><g class="fly"${style || ''}>${nest(Cards.card(deck, code), w)}</g></g>`;
@@ -306,7 +312,7 @@
   function scene(roomId, view, orient) {
     orient = LAYOUTS[orient] ? orient : 'landscape';
     const rm = ROOMS[roomId] || ROOMS['gold-room'];
-    const { G, plates, backs, bubbles } = points(rm, orient);
+    const { G, plates, backs, bubbles, reacts } = points(rm, orient);
     const k = uid++, ds = 'ds' + k, deck = view.deck, anim = view.anim || {};
     const winds = ['東', '南', '西', '北'];
     const backAt = rel => {
@@ -382,6 +388,16 @@
         `<text y="6" text-anchor="middle" font-family="${F.sans}" font-size="16" font-weight="700" fill="${rm.accent}">Pass</text></g></g>`;
     });
 
+    // Reactions next to the sender's seat.
+    (anim.reactions || []).forEach(r => {
+      const [rx, ry] = reacts[REL_KEYS[r.rel]];
+      const face = EMOJI[r.id] || '';
+      const body = r.id === 'gg'
+        ? `<rect x="-34" y="-24" width="68" height="48" rx="24" fill="#0B0D0C" fill-opacity=".88" stroke="${rm.accent}" stroke-width="2"/><text y="10" text-anchor="middle" font-family="${F.sans}" font-size="26" font-weight="700" fill="${rm.accent}">GG</text>`
+        : `<circle r="32" fill="#0B0D0C" fill-opacity=".55"/><text y="15" text-anchor="middle" font-size="42">${face}</text>`;
+      o += `<g transform="translate(${rx} ${ry})"><g class="react" style="animation:b2-react ${REACT_DUR}ms ease-out ${-Math.round(r.elapsed)}ms both">${body}</g></g>`;
+    });
+
     // Your hand: dealt in from the table, or sliding together after you play.
     const h = view.hand.length, w = G.hand.w, ch = w * 1.4;
     const prevShift = anim.shift ? anim.shift.prevHand : null;
@@ -395,16 +411,50 @@
         if (Math.abs(from.x - slot.x) > 0.5) style = motion(slot, from, 'b2-in', SHIFT_DUR, -anim.shift.elapsed);
       }
       o += `<g class="hc" data-card="${c.code}" transform="translate(${slot.x.toFixed(1)} ${slot.y.toFixed(1)}) rotate(${slot.rot.toFixed(2)})" filter="url(#${ds})">` +
-        `<g class="fly"${style}><g class="lift${c.selected ? ' sel' : ''}">` +
+        `<g class="fly"${style}><g class="lift${c.selected ? ' sel' : ''}${c.selected && anim.shake ? ' shake' : ''}"` +
+        (c.selected && anim.shake ? ` style="animation-delay:${-Math.round(anim.shake.elapsed)}ms"` : '') + '>' +
         (c.selected ? `<rect x="${-w / 2 - 5}" y="${-ch / 2 - 5}" width="${w + 10}" height="${ch + 10}" rx="12" fill="none" stroke="${rm.accent}" stroke-width="4"/>` : '') +
         nest(Cards.card(deck, c.code), w) + '</g></g></g>';
     });
+
+    if (view.chips && view.chips.length) o += chips(rm, G, view.chips);
 
     const [px, py] = G.buttons.play, [qx, qy] = G.buttons.pass;
     o += `<g class="sbtn${view.canPlay ? '' : ' off'}" data-action="play">${rm.button(px, py, 'Play', true)}</g>`;
     o += `<g class="sbtn${view.canPass ? '' : ' off'}" data-action="pass">${rm.button(qx, qy, 'Pass', false)}</g>`;
     o += '<g id="timer-layer"></g>';
     return o + '</svg>';
+  }
+
+  /** A centred row (or two) of quick-select chips, e.g. Pair, Straight, Flush. */
+  function chips(rm, G, list) {
+    const h = 36, gap = 10;
+    const textOf = c => c.label + (c.count > 1 ? ` · ${c.count}` : '');
+    const widthOf = c => Math.round(textOf(c).length * 8.6 + 34);
+    const rows = [[]];
+    let used = 0;
+    list.forEach(c => {
+      const w = widthOf(c);
+      if (used + w > G.chipsW && rows[rows.length - 1].length) { rows.push([]); used = 0; }
+      rows[rows.length - 1].push(c);
+      used += w + gap;
+    });
+    let o = '';
+    rows.forEach((row, ri) => {
+      const total = row.reduce((t, c) => t + widthOf(c), 0) + gap * (row.length - 1);
+      let x = G.w / 2 - total / 2;
+      const y = G.chipsY - (rows.length - 1 - ri) * (h + 8);
+      row.forEach(c => {
+        const w = widthOf(c);
+        const fill = c.active ? rm.accent : '#0B0D0C';
+        const ink = c.active ? '#111215' : '#EDE9DF';
+        o += `<g class="chip-btn" data-quick="${c.type}" role="button" aria-label="Select ${esc(c.label)}">` +
+          `<rect x="${x}" y="${y - h / 2}" width="${w}" height="${h}" rx="${h / 2}" fill="${fill}" fill-opacity="${c.active ? 1 : 0.82}" stroke="${rm.accent}" stroke-width="1.5"/>` +
+          T(x + w / 2, y + 5, textOf(c), { f: F.sans, s: 15, w: 600, c: ink }) + '</g>';
+        x += w + gap;
+      });
+    });
+    return o;
   }
 
   /** A slim countdown bar above a seat's plate, drawn into #timer-layer. */

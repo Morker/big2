@@ -151,6 +151,17 @@
 <main id="table" class="screen" hidden>
   <div id="stage"></div>
   <div id="hud"></div>
+  <div id="react-tray" class="react-tray" role="menu" aria-label="Reactions" hidden>
+    <button type="button" data-react="like" aria-label="Thumbs up">&#x1F44D;</button>
+    <button type="button" data-react="lol" aria-label="Laughing">&#x1F602;</button>
+    <button type="button" data-react="wow" aria-label="Wow">&#x1F62E;</button>
+    <button type="button" data-react="cool" aria-label="Cool">&#x1F60E;</button>
+    <button type="button" data-react="cry" aria-label="Crying">&#x1F62D;</button>
+    <button type="button" data-react="angry" aria-label="Angry">&#x1F621;</button>
+    <button type="button" data-react="fire" aria-label="Fire">&#x1F525;</button>
+    <button type="button" data-react="clap" aria-label="Applause">&#x1F44F;</button>
+    <button type="button" data-react="gg" aria-label="Good game" class="gg">GG</button>
+  </div>
   <div id="overlay" hidden></div>
 </main>
 
@@ -175,6 +186,7 @@
 
 <script src="js/cards.js"></script>
 <script src="js/rooms.js"></script>
+<script src="js/combos.js"></script>
 <script src="js/sound.js"></script>
 <script src="js/app.js"></script>
 </body>

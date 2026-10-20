@@ -204,6 +204,24 @@ class GameRoomTest {
     }
 
     @Test
+    void reactionsReachEveryoneButSpamIsDropped() {
+        RoomManager rooms = new RoomManager(FAST);
+        Agent alice = new Agent(rooms);
+        Agent bob = new Agent(rooms);
+        alice.session.handle("CREATE Alice");
+        bob.session.handle("JOIN " + roomCode(alice) + " Bob");
+
+        bob.session.handle("REACT fire");
+        bob.session.handle("REACT lol"); // too soon after the last one: dropped
+        assertEquals("REACT 1 fire", alice.last("REACT"));
+        assertEquals(1, alice.count("REACT"));
+
+        alice.session.handle("REACT <script>");
+        assertTrue(alice.last("ERROR").contains("Unknown reaction"));
+        assertEquals(1, bob.count("REACT"), "nothing is sent for an unknown reaction");
+    }
+
+    @Test
     void duplicateNamesAreMadeUniqueAndEmptyRoomsAreRemoved() {
         RoomManager rooms = new RoomManager(FAST);
         Agent first = new Agent(rooms);

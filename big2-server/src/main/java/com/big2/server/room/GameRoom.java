@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -41,6 +42,9 @@ public final class GameRoom {
 
     private static final long TIMER_GRACE_MS = 400;
     private static final List<String> BOT_NAMES = List.of("Ali", "Mei", "Raj", "Kim", "Leo", "Ana");
+    /** Reactions players can send; the client turns each id into an emoji. */
+    static final Set<String> REACTIONS = Set.of("like", "lol", "wow", "cool", "cry", "angry", "fire", "clap", "gg");
+    private static final long REACTION_GAP_MS = 1200;
 
     private enum Phase {
         LOBBY, PLAYING, BETWEEN;
@@ -58,6 +62,7 @@ public final class GameRoom {
     private final String[] names = new String[Game.PLAYER_COUNT];
     private Bot bot = BotLevel.NORMAL.create();
     private final Random random = new Random();
+    private final long[] lastReaction = new long[Game.PLAYER_COUNT];
 
     private GameSettings settings = GameSettings.DEFAULT;
     private Phase phase = Phase.LOBBY;
@@ -183,6 +188,20 @@ public final class GameRoom {
         } catch (InvalidMoveException e) {
             player.send(Protocol.ERROR + " " + e.getMessage());
         }
+    }
+
+    /** Shows a reaction next to the player's seat for everyone. Limited to one every ~1.2 seconds. */
+    public synchronized void react(PlayerSession player, String id) {
+        int seat = seatOf(player);
+        if (!REACTIONS.contains(id)) {
+            throw new IllegalArgumentException("Unknown reaction: " + id);
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastReaction[seat] < REACTION_GAP_MS) {
+            return; // quietly drop rapid repeats
+        }
+        lastReaction[seat] = now;
+        broadcast(Protocol.REACT + " " + seat + " " + id);
     }
 
     // ---- Match flow (always called with the lock held) ----
