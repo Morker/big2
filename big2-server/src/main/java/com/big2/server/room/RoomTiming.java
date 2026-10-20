@@ -8,5 +8,5 @@ package com.big2.server.room;
  */
 public record RoomTiming(long botDelayMs, int nextDealSeconds) {
 
-    public static final RoomTiming DEFAULT = new RoomTiming(900, 8);
+    public static final RoomTiming DEFAULT = new RoomTiming(900, 10);
 }

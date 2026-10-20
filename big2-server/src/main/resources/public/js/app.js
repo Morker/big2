@@ -25,6 +25,9 @@
     leaveArmed: false
   };
 
+  /** How long the winning play stays visible before the results appear. */
+  const REVEAL_MS = 2600;
+
   // ---------- Animations ----------
   // Each entry remembers when it started; rooms.js turns that into CSS animations that survive re-renders.
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -121,7 +124,7 @@
       case 'DEAL':
         S.deal = Number(rest);
         S.table = []; S.tableOwner = -1; S.playsThisDeal = 0;
-        S.lastAction = ''; S.lastPass = ''; S.selected.clear(); S.dealWinner = -1;
+        S.lastAction = ''; S.lastPass = ''; S.selected.clear(); S.dealWinner = -1; S.revealUntil = 0;
         if (S.deal === 1) { S.scores = [0, 0, 0, 0]; S.matchWinner = -1; }
         A = { deal: null, play: null, shift: null, sweep: null, passes: [] };
         animate('deal');
@@ -179,6 +182,8 @@
         break;
       }
       case 'WIN':
+        S.revealUntil = Date.now() + REVEAL_MS;
+        setTimeout(() => { if (S.view === 'table') renderTable(); }, REVEAL_MS + 30);
         S.dealWinner = Number(rest.split(/\s+/)[0]);
         S.turnDeadline = 0;
         Sound.effect(S.dealWinner === S.mySeat ? 'win' : 'lose');
@@ -354,7 +359,8 @@
     } else if (playing && S.turn >= 0) {
       status = (S.lastPass ? S.lastPass + ' · ' : '') + `${who(S.turn)} to play`;
     } else if (S.dealWinner >= 0) {
-      status = `${who(S.dealWinner)} ${S.dealWinner === S.mySeat ? 'win' : 'wins'} the deal`;
+      status = `${who(S.dealWinner)} ${S.dealWinner === S.mySeat ? 'win' : 'wins'} the deal` +
+        (revealing() ? ' · tap for results' : '');
     }
     if (!label && playing && S.leading && !myTurn) label = 'Table is clear';
 
@@ -391,9 +397,13 @@
       `<div class="hud-right">${board}<div class="chip"><button type="button" class="btn ghost" data-open-sound aria-label="Sound settings">Sound</button><button type="button" class="btn ghost" id="leave-btn">${S.leaveArmed ? 'Leave game? A bot takes your seat' : 'Leave'}</button></div></div>`;
   }
 
+  function revealing() {
+    return S.overlay && Date.now() < (S.revealUntil || 0);
+  }
+
   function renderOverlay() {
     const ov = $('#overlay');
-    if (!S.overlay) { ov.hidden = true; ov.innerHTML = ''; return; }
+    if (!S.overlay || revealing()) { ov.hidden = true; ov.innerHTML = ''; return; }
     ov.hidden = false;
     const rows = [0, 1, 2, 3].sort((a, b) => S.scores[a] - S.scores[b]);
     const showTotals = S.settings.mode !== 'single';
@@ -519,6 +529,11 @@
   }
 
   $('#table').addEventListener('click', e => {
+    if (revealing() && !e.target.closest('#hud')) {
+      S.revealUntil = 0;
+      renderTable();
+      return;
+    }
     const card = e.target.closest('[data-card]');
     if (card) {
       const code = card.getAttribute('data-card');
